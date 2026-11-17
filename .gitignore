@@ -1,0 +1,16 @@
+# Python cache files (created automatically, not needed in Git)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment (each person creates their own)
+.venv/
+venv/
+
+# PyCharm settings (personal to each computer)
+.idea/
+
+# Build / packaging output
+build/
+dist/
+*.egg-info/
