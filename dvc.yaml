@@ -1,6 +1,9 @@
 # DVC pipeline: a list of stages. DVC remembers the inputs (deps) and
 # outputs (outs) of each stage. On "dvc repro" it runs a stage again ONLY
 # if one of its inputs changed. This saves time and makes results reproducible.
+#
+# Order: prepare -> eda and prepare -> train. DVC finds the order itself
+# from the deps: eda and train both need data/processed from prepare.
 stages:
   prepare:
     cmd: python -m src.sms_fraud.data
@@ -11,6 +14,17 @@ stages:
       - config/config.yaml
     outs:
       - data/processed
+
+  eda:
+    cmd: python -m src.sms_fraud.eda
+    deps:
+      - data/processed
+      - src/sms_fraud/eda.py
+      # eda.py reads the keyword list from here (for observation 3).
+      - src/sms_fraud/rule_based.py
+    outs:
+      - reports/figures
+      - reports/eda_summary.md
 
   train:
     cmd: python -m src.sms_fraud.train
@@ -24,4 +38,8 @@ stages:
       # cache: false -> this small JSON file is saved in Git (not in the DVC
       # cache), so we can see metric changes in "git diff" and "dvc metrics".
       - reports/metrics.json:
+          cache: false
+    plots:
+      # The confusion matrix image of the pipeline model. Also kept in Git.
+      - reports/confusion_matrix.png:
           cache: false

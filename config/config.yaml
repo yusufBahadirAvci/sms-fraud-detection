@@ -26,12 +26,18 @@ model:
   max_features: 5000
   # ngram_range [1, 2]: use single words ("free") and word pairs ("free gift").
   ngram_range: [1, 2]
-  # C: how strongly the model may fit the training data.
+  # Which classifier to use: "logreg" (Logistic Regression) or "nb" (Naive Bayes).
+  name: "logreg"
+  # C (logreg only): how strongly the model may fit the training data.
   # Small C = simpler model, big C = fits the training data more closely.
   C: 1.0
-  # Where to save the trained model and its scores.
+  # alpha (nb only): "smoothing". It gives a tiny count to words never seen
+  # in a class, so one unknown word cannot make a probability zero.
+  alpha: 1.0
+  # Where to save the trained model, its scores and its confusion matrix.
   model_path: "models/model.joblib"
   metrics_path: "reports/metrics.json"
+  confusion_matrix_path: "reports/confusion_matrix.png"
 
 mlflow:
   # Local folder where MLflow saves everything:
