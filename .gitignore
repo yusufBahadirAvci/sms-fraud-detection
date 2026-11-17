@@ -10,6 +10,13 @@ venv/
 # PyCharm settings (personal to each computer)
 .idea/
 
+# Data files are too big for Git and can be downloaded again.
+# Later we will track them with DVC.
+data/
+
+# Log files are created each run; they are not source code.
+logs/
+
 # Build / packaging output
 build/
 dist/

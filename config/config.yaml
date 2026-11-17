@@ -1,0 +1,24 @@
+# Project settings in ONE place.
+# Why? If we want to change a path or a number, we change it here only,
+# not in many Python files.
+# All paths are relative to the project root folder.
+
+data:
+  # Where we download the dataset from (UCI SMS Spam Collection).
+  url: "https://archive.ics.uci.edu/static/public/228/sms+spam+collection.zip"
+  # Folder for the original, untouched files.
+  raw_dir: "data/raw"
+  # Name of the data file inside the zip.
+  raw_file: "SMSSpamCollection"
+  # Folder for the cleaned and split files.
+  processed_dir: "data/processed"
+
+split:
+  # 20% of the rows go to the test set, 80% to the train set.
+  test_size: 0.2
+  # A fixed "seed" makes the random split the same every time we run it.
+  # This makes our results reproducible.
+  random_state: 42
+
+logging:
+  log_file: "logs/app.log"
