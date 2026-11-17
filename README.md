@@ -1,22 +1,51 @@
 # SMS Fraud Detection
 
 ## Goal
-Detect fraud (scam) SMS messages. Step 1 is a simple **rule-based** checker
-that looks for suspicious keywords (Turkish and English). It is the baseline
-we will compare a future ML model against.
+Detect fraud (spam) SMS messages. The project has:
+- a rule-based baseline (`src/sms_fraud/rule_based.py`),
+- a data pipeline and EDA (`data.py`, `eda.py`),
+- an ML model (TF-IDF + Logistic Regression) tracked with MLflow and built with DVC,
+- a FastAPI service (`api.py`) and a Streamlit UI (`ui/app.py`), both runnable with Docker.
 
 ## Setup
 ```powershell
+python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## How to run
+## Build data and model (DVC pipeline)
 ```powershell
-python -m src.sms_fraud.rule_based
+dvc repro                         # prepare -> eda -> train
+.\.venv\Scripts\mlflow.exe ui --backend-store-uri sqlite:///mlruns/mlflow.db   # http://127.0.0.1:5000
 ```
 
-## How to test
+## Run locally (2 terminals, venv active)
+```powershell
+# Terminal 1: the API
+uvicorn src.sms_fraud.api:app --port 8000
+# Terminal 2: the UI
+streamlit run ui/app.py
+```
+- API docs (try the endpoints in the browser): http://localhost:8000/docs
+- UI: http://localhost:8501
+
+## Run with Docker
+`models/model.joblib` must exist first (run `dvc repro`), because it is copied into the API image.
+```powershell
+docker compose up --build -d      # build and start api + ui
+docker compose ps                 # api should be "healthy"
+docker compose logs -f api        # watch the API logs
+docker compose down               # stop and remove the containers
+```
+Predictions are appended to `logs/predictions.jsonl` (kept on your computer, also after `down`).
+
+## Example request
+```powershell
+curl.exe -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{\"message\": \"You won a FREE prize! Call now\"}'
+```
+
+## Test
 ```powershell
 pytest -v
 ```

@@ -1,0 +1,26 @@
+# Image for the Streamlit web UI.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install packages first (cached), then copy the code.
+COPY requirements-ui.txt .
+RUN pip install --no-cache-dir -r requirements-ui.txt
+
+COPY ui/ ui/
+
+# Run as a normal user, not root.
+RUN useradd --uid 1000 --create-home appuser
+USER appuser
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=4)"
+
+# --server.address 0.0.0.0: reachable from outside the container.
+# --browser.gatherUsageStats false: do not send usage data to Streamlit.
+CMD ["streamlit", "run", "ui/app.py", "--server.port", "8501", "--server.address", "0.0.0.0", "--browser.gatherUsageStats", "false"]

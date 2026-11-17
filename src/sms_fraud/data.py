@@ -9,6 +9,7 @@ Each step is a small, separate function. Why?
 """
 
 import csv
+import html
 import urllib.request
 import zipfile
 
@@ -89,6 +90,15 @@ def validate_data(df: pd.DataFrame) -> pd.DataFrame:
     # fillna("") turns missing values into empty text, so rule 1 catches them.
     df["message"] = df["message"].fillna("").astype(str).str.strip()
     df["label"] = df["label"].fillna("").astype(str).str.strip().str.lower()
+
+    # Decode HTML codes: "&lt;" -> "<", "&gt;" -> ">", "&amp;" -> "&".
+    # Why? The raw file has text like "&lt;#&gt;". Without this step the model
+    # learns fake "words" like "lt" and "gt" (our EDA showed them as the top
+    # ham words). Real users never type "&lt;", so this would not help.
+    decoded = df["message"].map(html.unescape)
+    changed = int((decoded != df["message"]).sum())
+    df["message"] = decoded
+    logger.info("Decoded HTML codes in %d messages", changed)
 
     # Rule 1: remove empty messages.
     before = len(df)

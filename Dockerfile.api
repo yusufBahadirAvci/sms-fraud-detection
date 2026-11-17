@@ -1,0 +1,38 @@
+# Image for the FastAPI model server.
+# "slim" = small Debian image with Python, without extra tools.
+FROM python:3.12-slim
+
+# PYTHONDONTWRITEBYTECODE: do not create .pyc files (not useful in a container).
+# PYTHONUNBUFFERED: print logs at once, so "docker logs" shows them live.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Copy the requirements FIRST and install them. Why? Docker caches each step.
+# If only our code changes, Docker reuses this slow install step.
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
+
+# Now copy what the API needs: code, config and the trained model.
+COPY src/ src/
+COPY config/ config/
+COPY models/model.joblib models/model.joblib
+
+# Security: do not run as "root". If someone breaks into the app, they
+# get a normal user with few rights. uid 1000 usually matches the first
+# user on a Linux host, so the mounted logs/ folder stays writable.
+RUN useradd --uid 1000 --create-home appuser \
+    && mkdir -p /app/logs \
+    && chown -R appuser:appuser /app/logs
+USER appuser
+
+EXPOSE 8000
+
+# Docker calls /health every 30 s. If it fails 3 times, the container is
+# marked "unhealthy". The slim image has no curl, so we use Python.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"
+
+# 0.0.0.0 = accept connections from outside the container (not only itself).
+CMD ["uvicorn", "src.sms_fraud.api:app", "--host", "0.0.0.0", "--port", "8000"]

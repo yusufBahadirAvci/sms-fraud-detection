@@ -1,0 +1,36 @@
+# Start both containers with one command:
+#     docker compose up --build -d
+# Stop them:
+#     docker compose down
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      # "host:container" -> open http://localhost:8000 on your computer.
+      - "8000:8000"
+    volumes:
+      # The container writes logs into /app/logs. We connect that folder to
+      # ./logs on your computer, so predictions.jsonl survives when the
+      # container is removed, and Step 5 (monitoring) can read it.
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    environment:
+      # Inside Docker, containers find each other by service name.
+      # "localhost" here would mean the UI container itself, not the API.
+      API_URL: "http://api:8000"
+    depends_on:
+      api:
+        # Wait until the API HEALTHCHECK says "healthy", not only "started".
+        # So the model is loaded before the UI sends the first request.
+        condition: service_healthy
+    restart: unless-stopped

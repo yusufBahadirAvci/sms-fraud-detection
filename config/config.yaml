@@ -30,7 +30,8 @@ model:
   name: "logreg"
   # C (logreg only): how strongly the model may fit the training data.
   # Small C = simpler model, big C = fits the training data more closely.
-  C: 1.0
+  # 10.0 was the best value in our MLflow experiments (Step 3: F1 0.938).
+  C: 10.0
   # alpha (nb only): "smoothing". It gives a tiny count to words never seen
   # in a class, so one unknown word cannot make a probability zero.
   alpha: 1.0
@@ -49,6 +50,14 @@ mlflow:
   tracking_dir: "mlruns"
   experiment_name: "sms-fraud"
   registered_model_name: "sms-fraud-classifier"
+
+api:
+  # If the spam probability is at least this value, we say "fraud".
+  # 0.5 is the normal default. Later we can move it to catch more spam
+  # (lower value) or to block fewer normal SMS (higher value).
+  threshold: 0.5
+  # Every prediction is added as one JSON line here (used for monitoring).
+  predictions_log: "logs/predictions.jsonl"
 
 logging:
   log_file: "logs/app.log"

@@ -47,6 +47,13 @@ def test_validate_does_not_change_input():
     assert len(df) == 6
 
 
+def test_validate_decodes_html_codes():
+    # "&lt;" and "&gt;" in the raw data must become "<" and ">".
+    df = pd.DataFrame({"label": ["ham"], "message": ["I will be there in &lt;#&gt; mins &amp; call"]})
+    clean = validate_data(df)
+    assert clean.loc[0, "message"] == "I will be there in <#> mins & call"
+
+
 def test_split_keeps_spam_ratio():
     # 40 ham + 10 spam = 20% spam.
     df = pd.DataFrame(

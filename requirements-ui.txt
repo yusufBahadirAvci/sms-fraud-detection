@@ -1,0 +1,4 @@
+# Only what the UI container needs. The UI never loads the model,
+# so no scikit-learn here.
+requests==2.34.2
+streamlit==1.67.0

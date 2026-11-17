@@ -1,0 +1,12 @@
+# Only what the API container needs at runtime.
+# Why a separate file? The full requirements.txt has MLflow, DVC, pandas,
+# matplotlib, Streamlit... The API needs none of them. Fewer packages =
+# smaller image, faster build, fewer security problems.
+#
+# scikit-learn MUST be the same version that trained models/model.joblib,
+# otherwise loading the saved model can fail or give wrong results.
+fastapi==0.163.2
+joblib==1.6.0
+PyYAML==6.0.3
+scikit-learn==1.9.1
+uvicorn==0.54.0

@@ -1,0 +1,22 @@
+# Files Docker should NOT send into the build. A smaller build context
+# means faster builds, and no secrets or big data end up in the image.
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Data, experiments and logs (big, or created at runtime)
+data/
+mlruns/
+logs/
+reports/
+
+# Git, DVC and IDE folders
+.git/
+.dvc/
+.idea/
+
+# Tests are not needed to RUN the app
+tests/
