@@ -1,0 +1,44 @@
+schema: '2.0'
+stages:
+  prepare:
+    cmd: python -m src.sms_fraud.data
+    deps:
+    - path: config/config.yaml
+      hash: md5
+      md5: 6c255d3a28681732186b95ac0d9a31c3
+      size: 1797
+    - path: src/sms_fraud/data.py
+      hash: md5
+      md5: cab09898b1746b24cd38132b1ddbcfa4
+      size: 6216
+    outs:
+    - path: data/processed
+      hash: md5
+      md5: 37311cf070318754b5feceebbb4c7e82.dir
+      size: 443447
+      nfiles: 2
+  train:
+    cmd: python -m src.sms_fraud.train
+    deps:
+    - path: config/config.yaml
+      hash: md5
+      md5: 6c255d3a28681732186b95ac0d9a31c3
+      size: 1797
+    - path: data/processed
+      hash: md5
+      md5: 37311cf070318754b5feceebbb4c7e82.dir
+      size: 443447
+      nfiles: 2
+    - path: src/sms_fraud/train.py
+      hash: md5
+      md5: 54ae58edca2e3374c230350c379bd8a1
+      size: 6993
+    outs:
+    - path: models/model.joblib
+      hash: md5
+      md5: 4ce5ab5c0732e04cd1ddd075d9151891
+      size: 226612
+    - path: reports/metrics.json
+      hash: md5
+      md5: 386c3bc4bc8d8563b01c73e6c2e764b0
+      size: 310

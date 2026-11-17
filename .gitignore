@@ -10,9 +10,13 @@ venv/
 # PyCharm settings (personal to each computer)
 .idea/
 
-# Data files are too big for Git and can be downloaded again.
-# Later we will track them with DVC.
-data/
+# Raw data is downloaded by the "prepare" stage, so Git does not need it.
+# We do NOT ignore all of data/ here: DVC writes its own small .gitignore
+# files (data/.gitignore, models/.gitignore) for the outputs it manages.
+data/raw/
+
+# MLflow runs and registered models (local tracking store).
+mlruns/
 
 # Log files are created each run; they are not source code.
 logs/

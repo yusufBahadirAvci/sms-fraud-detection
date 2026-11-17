@@ -20,5 +20,29 @@ split:
   # This makes our results reproducible.
   random_state: 42
 
+model:
+  # Hyperparameters = settings we choose BEFORE training.
+  # max_features: keep only the 5000 most common words/word pairs.
+  max_features: 5000
+  # ngram_range [1, 2]: use single words ("free") and word pairs ("free gift").
+  ngram_range: [1, 2]
+  # C: how strongly the model may fit the training data.
+  # Small C = simpler model, big C = fits the training data more closely.
+  C: 1.0
+  # Where to save the trained model and its scores.
+  model_path: "models/model.joblib"
+  metrics_path: "reports/metrics.json"
+
+mlflow:
+  # Local folder where MLflow saves everything:
+  #   mlruns/mlflow.db  -> a small SQLite database with runs, params, metrics
+  #                        and the Model Registry
+  #   mlruns/artifacts/ -> the saved model files
+  # (New MLflow versions no longer accept plain folders as the run store,
+  #  so we use a local database file instead.)
+  tracking_dir: "mlruns"
+  experiment_name: "sms-fraud"
+  registered_model_name: "sms-fraud-classifier"
+
 logging:
   log_file: "logs/app.log"

@@ -18,7 +18,10 @@ from sklearn.model_selection import train_test_split
 from src.sms_fraud.config import get_config, project_path
 from src.sms_fraud.logger import get_logger
 
-logger = get_logger(__name__)
+# We write the name by hand instead of using __name__.
+# Why? When we run "python -m src.sms_fraud.data", Python sets __name__
+# to "__main__", and the logs would show "__main__" instead of the module name.
+logger = get_logger("sms_fraud.data")
 
 # The only labels we accept. "ham" means a normal message.
 VALID_LABELS = {"ham", "spam"}

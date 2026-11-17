@@ -1,0 +1,27 @@
+# DVC pipeline: a list of stages. DVC remembers the inputs (deps) and
+# outputs (outs) of each stage. On "dvc repro" it runs a stage again ONLY
+# if one of its inputs changed. This saves time and makes results reproducible.
+stages:
+  prepare:
+    cmd: python -m src.sms_fraud.data
+    # A stage with NO deps is treated as "always changed" and would run every
+    # time. So we list the code and the config it depends on.
+    deps:
+      - src/sms_fraud/data.py
+      - config/config.yaml
+    outs:
+      - data/processed
+
+  train:
+    cmd: python -m src.sms_fraud.train
+    deps:
+      - data/processed
+      - src/sms_fraud/train.py
+      - config/config.yaml
+    outs:
+      - models/model.joblib
+    metrics:
+      # cache: false -> this small JSON file is saved in Git (not in the DVC
+      # cache), so we can see metric changes in "git diff" and "dvc metrics".
+      - reports/metrics.json:
+          cache: false
