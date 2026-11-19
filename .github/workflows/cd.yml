@@ -1,0 +1,249 @@
+# Continuous Delivery (CD) + scheduled monitoring.
+#
+# Job "deliver": after CI is green on main, build the Docker images with the
+#   REAL model (pulled from the DVC remote on DagsHub), test the API, and push
+#   both images to GitHub Container Registry (ghcr.io).
+# Job "monitor": every Monday, check the served model for drift on the
+#   Turkish test set. If a threshold is crossed, open a GitHub issue.
+#
+# Secrets (Settings -> Secrets and variables -> Actions):
+#   DAGSHUB_TOKEN  DagsHub access token (used as S3 key AND secret by DagsHub)
+#   DAGSHUB_USER   DagsHub user name (only shown in logs; the remote URL is in .dvc/config)
+# The token is written ONLY into .dvc/config.local inside the runner, which
+# is never committed and is deleted when the runner stops.
+
+name: CD
+
+on:
+  # Runs when the "CI" workflow finishes (success OR failure; we check below).
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Every Monday at 06:00 UTC (cron: minute hour day-of-month month day-of-week).
+  schedule:
+    - cron: "0 6 * * 1"
+  # The "Run workflow" button in the Actions tab.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        options: [all, deliver, monitor]
+        default: all
+
+# Never cancel a delivery half-way (an image could be pushed without its
+# "latest" tag). A new run waits until the old one is finished.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+# Default: read-only. Each job asks for the extra rights it needs.
+permissions:
+  contents: read
+
+env:
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+  # The same pinned versions as requirements-dev.txt.
+  DVC_PACKAGES: "dvc[s3]==3.67.1 dvc-s3==3.3.0"
+
+jobs:
+  deliver:
+    # Run only if: CI passed for a PUSH to main, or someone clicked the button
+    # (and did not choose "monitor" only). A failed CI must never deliver.
+    if: >-
+      (github.event_name == 'workflow_run'
+        && github.event.workflow_run.conclusion == 'success'
+        && github.event.workflow_run.event == 'push')
+      || (github.event_name == 'workflow_dispatch' && inputs.job != 'monitor')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Needed to push images to ghcr.io with the built-in GITHUB_TOKEN.
+      packages: write
+    steps:
+      - name: Check out the commit that CI tested
+        uses: actions/checkout@v5
+        with:
+          # workflow_run: the exact commit CI checked. Manual run: the current commit.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install DVC
+        run: pip install ${{ env.DVC_PACKAGES }}
+
+      - name: Configure DVC credentials (runner only)
+        # --local writes to .dvc/config.local (gitignored), not .dvc/config.
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          dvc remote modify origin --local access_key_id "$DAGSHUB_TOKEN"
+          dvc remote modify origin --local secret_access_key "$DAGSHUB_TOKEN"
+
+      - name: Pull the real model (only what the image needs)
+        run: |
+          dvc pull models/model.joblib
+          ls -l models/model.joblib
+
+      - name: Compute image names and tags
+        # GHCR needs lowercase names; ${VAR,,} makes text lowercase in bash.
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "API_IMAGE=ghcr.io/${OWNER}/sms-fraud-api" >> "$GITHUB_ENV"
+          echo "UI_IMAGE=ghcr.io/${OWNER}/sms-fraud-ui" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHA::7}" >> "$GITHUB_ENV"
+
+      # PATTERN: Immutable Artifact — every image gets the commit sha as a tag that never moves, so
+      #   we always know which code and model are inside; "latest" is only a moving pointer to it.
+      - name: Build the API and UI images
+        # The label links the image to this repo on GitHub (shown on the package page).
+        run: |
+          LABEL="org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+          docker build -f Dockerfile.api --label "$LABEL" \
+            -t "$API_IMAGE:$SHORT_SHA" -t "$API_IMAGE:latest" .
+          docker build -f Dockerfile.ui --label "$LABEL" \
+            -t "$UI_IMAGE:$SHORT_SHA" -t "$UI_IMAGE:latest" .
+
+      - name: Smoke test the API image
+        # Same checks as CI, plus: the API must serve the REAL model.
+        # The API uses the md5 of the model file as its version, so it must
+        # match the md5 of the file DVC pulled (not the CI dummy model).
+        run: |
+          docker run -d --name api -p 8000:8000 "$API_IMAGE:$SHORT_SHA"
+          for i in $(seq 1 40); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' api)
+            echo "health status: $status"
+            [ "$status" = "healthy" ] && break
+            [ "$status" = "unhealthy" ] && { docker logs api; exit 1; }
+            sleep 3
+          done
+          [ "$status" = "healthy" ] || { docker logs api; exit 1; }
+          curl -fsS http://localhost:8000/health | tee health.json; echo
+          jq -e '.model_loaded == true' health.json
+          curl -fsS -X POST http://localhost:8000/predict \
+            -H "Content-Type: application/json" \
+            -d '{"message": "WINNER! Click here to claim your prize"}' | tee predict.json; echo
+          EXPECTED=$(md5sum models/model.joblib | cut -d' ' -f1)
+          jq -e --arg v "$EXPECTED" '.model_version == $v and .is_fraud == true' predict.json
+          docker rm -f api
+
+      - name: Log in to GitHub Container Registry
+        # GITHUB_TOKEN is created by GitHub for this run and expires after it.
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push the images
+        run: |
+          for image in "$API_IMAGE" "$UI_IMAGE"; do
+            docker push "$image:$SHORT_SHA"
+            docker push "$image:latest"
+          done
+          echo "Pushed $API_IMAGE and $UI_IMAGE with tags $SHORT_SHA and latest" >> "$GITHUB_STEP_SUMMARY"
+
+  monitor:
+    # Run on the Monday schedule, or by button (unless "deliver" only was chosen).
+    if: >-
+      github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && inputs.job != 'deliver')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Needed to open an issue when drift is found.
+      issues: write
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        # monitoring.py needs the runtime packages (pandas, scipy, scikit-learn, ...).
+        run: pip install -r requirements.txt ${{ env.DVC_PACKAGES }}
+
+      - name: Configure DVC credentials (runner only)
+        env:
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          dvc remote modify origin --local access_key_id "$DAGSHUB_TOKEN"
+          dvc remote modify origin --local secret_access_key "$DAGSHUB_TOKEN"
+
+      - name: Pull the model and the two test sets
+        run: dvc pull models/model.joblib data/processed/test.csv data/processed/turkish_test.csv
+
+      - name: Run monitoring (dataset mode)
+        # Reference = combined test set, current = Turkish test set.
+        # Known alerts (length KS test, PSI) are NOT hidden: we report them.
+        run: python -m src.sms_fraud.monitoring
+
+      - name: Upload the monitoring report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: monitoring-report
+          path: reports/monitoring
+          if-no-files-found: warn
+
+      # PATTERN: Idempotent Receiver — running the alert step again does not create a second issue:
+      #   if an open "Drift alert" issue exists, we only add a comment to it.
+      - name: Open a GitHub issue if drift was found
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("fs");
+            const dir = "reports/monitoring";
+            // monitoring.py writes alert.json ONLY when a threshold is crossed.
+            if (!fs.existsSync(`${dir}/alert.json`)) {
+              core.info("No alert.json: no drift, nothing to report.");
+              return;
+            }
+            const alert = JSON.parse(fs.readFileSync(`${dir}/alert.json`, "utf8"));
+            const report = fs.readFileSync(`${dir}/drift_report.md`, "utf8");
+            // The drift table = all lines of the report that start with "|".
+            const table = report.split("\n").filter((line) => line.startsWith("|")).join("\n");
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const date = new Date().toISOString().slice(0, 10);  // e.g. 2026-11-23
+            const body = [
+              `Weekly monitoring found drift (${alert.current_window}).`,
+              "",
+              table,
+              "",
+              "**Alerts**",
+              ...alert.alerts.map((a) => `- ${a}`),
+              "",
+              `Full report and charts: artifact "monitoring-report" of [this run](${runUrl}).`,
+            ].join("\n");
+
+            // Is there already an OPEN drift issue? (Pull requests are also
+            // "issues" in the API, so we skip those.)
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = open.find((i) => !i.pull_request && i.title.startsWith("Drift alert"));
+            if (existing) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: existing.number,
+                body: `Drift still present on ${date}.\n\n${body}`,
+              });
+              core.info(`Open drift issue #${existing.number} exists: added a comment, no new issue.`);
+              return;
+            }
+            const issue = await github.rest.issues.create({
+              ...context.repo,
+              title: `Drift alert ${date}`,
+              body,
+            });
+            core.info(`Opened issue #${issue.data.number}: ${issue.data.html_url}`);

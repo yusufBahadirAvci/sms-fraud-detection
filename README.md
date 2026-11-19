@@ -17,6 +17,21 @@ pip install -r requirements.txt       # runtime only
 pip install -r requirements-dev.txt   # + pytest, pytest-cov, ruff, httpx (for development)
 ```
 
+## Data & models (DVC remote on DagsHub)
+Data and models are not in Git. DVC keeps them in an S3-compatible storage on DagsHub:
+`https://dagshub.com/yusufBahadirAvci/sms-fraud-detection` (remote `origin` in `.dvc/config`).
+The access token is personal: store it with `--local`, so it goes to `.dvc/config.local`
+(ignored by Git) and is never committed.
+```powershell
+pip install -r requirements-dev.txt     # includes dvc[s3]
+# DagsHub uses the token as BOTH the key id and the secret:
+dvc remote modify origin --local access_key_id <your DagsHub token>
+dvc remote modify origin --local secret_access_key <your DagsHub token>
+dvc pull                                # download data + model into the working folder
+dvc status -c                           # local cache vs remote: should be in sync
+dvc push                                # after "dvc repro" or "dvc add": upload new versions
+```
+
 ## Build data and model (DVC pipeline)
 ```powershell
 dvc repro                         # prepare, prepare_turkish, combine, eda, train (runs A/B/C), monitor
@@ -80,6 +95,30 @@ ruff check .                  # lint (rules in pyproject.toml)
 ruff format .                 # format the code
 pytest -v --cov=src           # tests + coverage (no real data or model needed)
 ```
+
+## Deployment (images on GitHub Container Registry)
+After CI is green on `main`, the **CD** workflow (`.github/workflows/cd.yml`, job `deliver`)
+pulls the real model from DagsHub, builds both images, tests the API (it must serve the real
+model) and pushes them to GHCR with two tags: the short commit sha (never changes) and `latest`.
+```powershell
+# Only needed while the packages are private (GitHub -> Packages -> package settings):
+# log in with a GitHub token that has the "read:packages" scope.
+docker login ghcr.io -u <github user>
+
+docker pull ghcr.io/yusufbahadiravci/sms-fraud-api:latest
+docker pull ghcr.io/yusufbahadiravci/sms-fraud-ui:latest
+
+docker network create sms
+docker run -d --name api --network sms -p 8000:8000 ghcr.io/yusufbahadiravci/sms-fraud-api:latest
+docker run -d --name ui --network sms -p 8501:8501 -e API_URL=http://api:8000 ghcr.io/yusufbahadiravci/sms-fraud-ui:latest
+```
+Use a sha tag (e.g. `:fae0fea`) instead of `latest` to run one exact version, or to roll back.
+
+## Scheduled monitoring
+The CD job `monitor` runs every Monday 06:00 UTC (and by the "Run workflow" button). It pulls
+the model and the test sets, runs `python -m src.sms_fraud.monitoring`, uploads
+`reports/monitoring` as an artifact and, if `alert.json` exists, opens a
+**"Drift alert &lt;date&gt;"** issue (or comments on the open one, so there are no duplicates).
 
 ## Continuous Integration
 `.github/workflows/ci.yml` runs on every push and pull request to `main`:

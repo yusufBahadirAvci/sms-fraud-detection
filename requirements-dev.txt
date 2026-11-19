@@ -13,3 +13,8 @@ pytest-cov==7.1.0
 httpx==0.28.1
 # Very fast linter AND formatter (replaces flake8, isort and black).
 ruff==0.17.5
+# DVC with S3 support, to push/pull data and models to the DagsHub remote
+# (DagsHub storage speaks the S3 protocol). dvc-s3 is the plugin that
+# "dvc[s3]" installs; we pin it too, so everyone gets the same version.
+dvc[s3]==3.67.1
+dvc-s3==3.3.0
