@@ -1,9 +1,19 @@
-"""Train an ML model, compare it with the rule-based baseline, track with MLflow.
+"""Train candidate models on English + Turkish data and track them with MLflow.
 
 Run it with:
-    python -m src.sms_fraud.train                          (settings from config.yaml)
-    python -m src.sms_fraud.train --model logreg --C 10    (Logistic Regression)
-    python -m src.sms_fraud.train --model nb --alpha 0.1   (Naive Bayes)
+    python -m src.sms_fraud.train               (all runs from config.yaml: A, B, C)
+    python -m src.sms_fraud.train --only B_char (one run only)
+
+Each run:
+1. trains on the COMBINED train set (English + Turkish),
+2. is scored SEPARATELY on the English test set and the Turkish test set
+   (metrics with prefix en_ and tr_),
+3. is logged to MLflow and registered as a new model version,
+4. is saved as models/candidates/<run name>.joblib.
+
+Training does NOT change models/model.joblib (the model the API serves).
+That is the job of promote.py, which compares the best new run with the
+current model and replaces it only if the new one is really better.
 """
 
 import argparse
@@ -31,7 +41,7 @@ from sklearn.metrics import (  # noqa: E402
     recall_score,
 )
 from sklearn.naive_bayes import MultinomialNB  # noqa: E402
-from sklearn.pipeline import Pipeline  # noqa: E402
+from sklearn.pipeline import FeatureUnion, Pipeline  # noqa: E402
 
 from src.sms_fraud.config import get_config, project_path  # noqa: E402
 from src.sms_fraud.logger import get_logger  # noqa: E402
@@ -43,17 +53,40 @@ logger = get_logger("sms_fraud.train")
 # because spam is the thing we want to find.
 LABEL_MAP = {"ham": 0, "spam": 1}
 
-# The model names we accept on the command line.
+# The model names and feature kinds we accept.
 MODEL_NAMES = ["logreg", "nb"]
+FEATURE_KINDS = ["word", "char", "word+char"]
 
 
-def load_split(name: str) -> tuple[pd.Series, pd.Series]:
-    """Load train.csv or test.csv. Return (messages, labels as 0/1)."""
-    path = project_path(get_config()["data"]["processed_dir"]) / f"{name}.csv"
+# ---------------------------------------------------------------------------
+# 1. Data
+# ---------------------------------------------------------------------------
+
+
+def load_labelled(path) -> tuple[pd.Series, pd.Series]:
+    """Load a CSV with "label" and "message". Return (messages, labels as 0/1)."""
     # keep_default_na=False: by default pandas reads text like "NA" or "null"
     # as a missing value. An SMS can really say "NA", so we keep it as text.
     df = pd.read_csv(path, encoding="utf-8", keep_default_na=False)
     return df["message"], df["label"].map(LABEL_MAP)
+
+
+def load_split(name: str) -> tuple[pd.Series, pd.Series]:
+    """Load the English train.csv or test.csv."""
+    return load_labelled(project_path(get_config()["data"]["processed_dir"]) / f"{name}.csv")
+
+
+def load_test_sets() -> dict[str, tuple[pd.Series, pd.Series]]:
+    """The two test sets, kept SEPARATE: {"en": (X, y), "tr": (X, y)}."""
+    return {
+        "en": load_split("test"),
+        "tr": load_labelled(project_path(get_config()["data"]["turkish_test_file"])),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2. Build the model
+# ---------------------------------------------------------------------------
 
 
 # PATTERN: Factory — one function decides WHICH classifier to create from a name ("logreg" or "nb"), so main() and the tests never need to know the details of each model.
@@ -71,24 +104,72 @@ def build_classifier(model_name: str, C: float = 1.0, alpha: float = 1.0):
     raise ValueError(f"Unknown model: {model_name!r}. Use one of {MODEL_NAMES}.")
 
 
+# PATTERN: Factory — one function creates the text-to-numbers step from a name ("word", "char", "word+char"), so a new experiment is one line in config.yaml, not new code.
+def build_features(
+    features: str,
+    max_features: int,
+    ngram_range: tuple[int, int],
+    char_max_features: int = 20000,
+    char_ngram_range: tuple[int, int] = (3, 5),
+):
+    """Create the TF-IDF step: words, letter pieces, or both."""
+
+    def word_tfidf():
+        # Words and word pairs, as in the Step 4 model.
+        return TfidfVectorizer(max_features=max_features, ngram_range=ngram_range)
+
+    def char_tfidf():
+        # analyzer="char_wb": letter pieces taken only INSIDE words
+        # (wb = word boundary). "tıklayın" -> " tı", "tık", "ıkl", ...
+        # So "tıkla", "tıklayın" and "tıklayınız" share most of their pieces,
+        # and a new suffix does not make the whole word unknown.
+        # sublinear_tf: use 1 + log(count) instead of the raw count, so one
+        # piece repeated many times in a long message does not dominate.
+        return TfidfVectorizer(
+            analyzer="char_wb",
+            ngram_range=char_ngram_range,
+            max_features=char_max_features,
+            sublinear_tf=True,
+        )
+
+    if features == "word":
+        return word_tfidf()
+    if features == "char":
+        return char_tfidf()
+    if features == "word+char":
+        # FeatureUnion runs both vectorizers on the same text and puts their
+        # numbers side by side in one long row: [word numbers | char numbers].
+        return FeatureUnion([("word", word_tfidf()), ("char", char_tfidf())])
+    raise ValueError(f"Unknown features: {features!r}. Use one of {FEATURE_KINDS}.")
+
+
 def build_pipeline(
     model_name: str,
     max_features: int,
     ngram_range: tuple[int, int],
     C: float = 1.0,
     alpha: float = 1.0,
+    features: str = "word",
+    char_max_features: int = 20000,
+    char_ngram_range: tuple[int, int] = (3, 5),
 ) -> Pipeline:
     """Create the full model: text -> TF-IDF numbers -> classifier."""
     # PATTERN: Pipeline — the text step (TF-IDF) and the classifier are joined into one object, so training and prediction always use the same steps in the same order.
     return Pipeline(
         [
-            # Step 1: turn each message into numbers. TF-IDF gives a high
-            # score to words that are common in THIS message but rare overall.
-            ("tfidf", TfidfVectorizer(max_features=max_features, ngram_range=ngram_range)),
+            # Step 1: turn each message into numbers. The step keeps the name
+            # "tfidf" for every feature kind, so the API and monitoring code
+            # always find it in the same place.
+            ("tfidf", build_features(features, max_features, ngram_range, char_max_features, char_ngram_range)),
             # Step 2: the classifier, chosen by the factory above.
             ("clf", build_classifier(model_name, C=C, alpha=alpha)),
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# 3. Score the model
+# ---------------------------------------------------------------------------
 
 
 def evaluate(y_true, y_pred) -> dict:
@@ -105,6 +186,17 @@ def evaluate(y_true, y_pred) -> dict:
         # One number that balances precision and recall.
         "f1": f1_score(y_true, y_pred, zero_division=0),
     }
+
+
+def evaluate_by_language(model, test_sets: dict) -> dict:
+    """Score a model on each test set. Keys get the language as prefix:
+    {"en_accuracy": ..., "en_f1": ..., "tr_accuracy": ..., "tr_f1": ...}.
+    """
+    scores = {}
+    for lang, (X, y) in test_sets.items():
+        for name, value in evaluate(y, model.predict(X)).items():
+            scores[f"{lang}_{name}"] = float(value)
+    return scores
 
 
 def evaluate_baseline(messages: pd.Series, y_true: pd.Series) -> dict:
@@ -134,6 +226,11 @@ def save_confusion_matrix(y_true, y_pred, title: str, path) -> None:
     plt.close(display.figure_)
 
 
+# ---------------------------------------------------------------------------
+# 4. MLflow and the main program
+# ---------------------------------------------------------------------------
+
+
 def setup_mlflow(mlflow_cfg: dict) -> None:
     """Tell MLflow to save everything in the local ./mlruns folder."""
     tracking_dir = project_path(mlflow_cfg["tracking_dir"])
@@ -152,92 +249,111 @@ def setup_mlflow(mlflow_cfg: dict) -> None:
     mlflow.set_experiment(name)
 
 
+def run_experiment(experiment: dict, X_train, y_train, test_sets: dict, cfg: dict) -> dict:
+    """Train, score, log and save ONE run. Return its results for metrics.json."""
+    model_cfg = cfg["model"]
+    run_name = experiment["name"]
+    params = {
+        "model": experiment.get("model", model_cfg["name"]),
+        "features": experiment["features"],
+        "C": model_cfg["C"],
+        "alpha": model_cfg["alpha"],
+        "max_features": model_cfg["max_features"],
+        # YAML gives a list [1, 2]; scikit-learn needs a tuple (1, 2).
+        "ngram_range": tuple(model_cfg["ngram_range"]),
+        "char_max_features": model_cfg["char_max_features"],
+        "char_ngram_range": tuple(model_cfg["char_ngram_range"]),
+    }
+
+    # Everything inside this "with" block belongs to ONE MLflow run.
+    with mlflow.start_run(run_name=run_name) as run:
+        model = build_pipeline(
+            model_name=params["model"],
+            max_features=params["max_features"],
+            ngram_range=params["ngram_range"],
+            C=params["C"],
+            alpha=params["alpha"],
+            features=params["features"],
+            char_max_features=params["char_max_features"],
+            char_ngram_range=params["char_ngram_range"],
+        )
+        model.fit(X_train, y_train)
+        scores = evaluate_by_language(model, test_sets)
+
+        mlflow.log_params(params)
+        # Tags are free text labels. They help to find these runs later.
+        mlflow.set_tags({"step": "5b", "train_data": "combined_en_tr"})
+        mlflow.log_metrics(scores)
+
+        # One confusion matrix per language, saved on disk AND in MLflow.
+        for lang, (X, y) in test_sets.items():
+            cm_path = project_path(model_cfg["confusion_dir"]) / f"{run_name}_{lang}.png"
+            save_confusion_matrix(y, model.predict(X), f"{run_name} on {lang} test", cm_path)
+            mlflow.log_artifact(str(cm_path))
+
+        # Save the model in MLflow AND register it in the Model Registry.
+        # Each run creates a new "version" of "sms-fraud-classifier".
+        info = mlflow.sklearn.log_model(
+            model,
+            name="model",
+            registered_model_name=cfg["mlflow"]["registered_model_name"],
+        )
+
+    # Save the candidate on disk too. promote.py copies the winner from here.
+    candidate_path = project_path(model_cfg["candidates_dir"]) / f"{run_name}.joblib"
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, candidate_path)
+
+    logger.info(
+        "%-12s en_f1=%.4f tr_f1=%.4f (registered version %s)",
+        run_name, scores["en_f1"], scores["tr_f1"], info.registered_model_version,
+    )
+    return {
+        "run_id": run.info.run_id,
+        "model_version": str(info.registered_model_version),
+        # Relative path: the file stays valid on another computer.
+        "candidate_path": f"{model_cfg['candidates_dir']}/{run_name}.joblib",
+        "params": {k: list(v) if isinstance(v, tuple) else v for k, v in params.items()},
+        "metrics": scores,
+    }
+
+
 def parse_args() -> argparse.Namespace:
-    """Read options from the command line, e.g. --model nb --alpha 0.1."""
-    parser = argparse.ArgumentParser(description="Train the SMS fraud model.")
-    # default=None means: "if not given, use the value from config.yaml".
-    parser.add_argument("--model", choices=MODEL_NAMES, default=None, help="Which classifier to train.")
-    parser.add_argument("--C", type=float, default=None, help="logreg: regularization strength.")
-    parser.add_argument("--alpha", type=float, default=None, help="nb: smoothing value.")
+    parser = argparse.ArgumentParser(description="Train the SMS fraud candidate models.")
+    parser.add_argument("--only", default=None, help="Run only the experiment with this name (e.g. B_char).")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     cfg = get_config()
-    model_cfg = cfg["model"]
-    mlflow_cfg = cfg["mlflow"]
+    experiments = cfg["model"]["experiments"]
+    if args.only:
+        experiments = [e for e in experiments if e["name"] == args.only]
+        if not experiments:
+            raise ValueError(f"No experiment named {args.only!r} in config.yaml")
 
-    # The CLI value wins over the config value.
-    model_name = args.model if args.model is not None else model_cfg["name"]
+    X_train, y_train = load_labelled(project_path(cfg["data"]["combined_train_file"]))
+    test_sets = load_test_sets()
+    logger.info(
+        "Train rows: %d (combined) | en test: %d | tr test: %d",
+        len(X_train), len(test_sets["en"][0]), len(test_sets["tr"][0]),
+    )
 
-    # Collect the hyperparameters for this run.
-    params = {
-        "model": model_name,
-        "max_features": model_cfg["max_features"],
-        # YAML gives a list [1, 2]; scikit-learn needs a tuple (1, 2).
-        "ngram_range": tuple(model_cfg["ngram_range"]),
-    }
-    # Each model has its own main setting. We store only the one that is
-    # used, so MLflow does not show a C value for a Naive Bayes run.
-    if model_name == "logreg":
-        params["C"] = args.C if args.C is not None else model_cfg["C"]
-        run_name = f"logreg_C={params['C']}"
-    else:
-        params["alpha"] = args.alpha if args.alpha is not None else model_cfg["alpha"]
-        run_name = f"nb_alpha={params['alpha']}"
+    setup_mlflow(cfg["mlflow"])
+    runs = {e["name"]: run_experiment(e, X_train, y_train, test_sets, cfg) for e in experiments}
 
-    X_train, y_train = load_split("train")
-    X_test, y_test = load_split("test")
-    logger.info("Run: %s | Train rows: %d | Test rows: %d", run_name, len(X_train), len(X_test))
+    # The rule-based checker from Step 1, for comparison (it has no training).
+    baseline = {}
+    for lang, (X, y) in test_sets.items():
+        baseline.update({f"{lang}_{k}": float(v) for k, v in evaluate_baseline(X, y).items()})
 
-    setup_mlflow(mlflow_cfg)
-
-    # Everything inside this "with" block belongs to ONE MLflow run.
-    with mlflow.start_run(run_name=run_name):
-        # "model" is the factory input, the rest are model settings.
-        model = build_pipeline(model_name=model_name, **{k: v for k, v in params.items() if k != "model"})
-        model.fit(X_train, y_train)
-
-        y_pred = model.predict(X_test)
-        ml_metrics = evaluate(y_test, y_pred)
-        baseline_metrics = evaluate_baseline(X_test, y_test)
-
-        # Show both results side by side, so we see if ML beats the rules.
-        logger.info("%-10s %10s %10s", "metric", "baseline", model_name)
-        for name in ml_metrics:
-            logger.info("%-10s %10.4f %10.4f", name, baseline_metrics[name], ml_metrics[name])
-
-        # Log to MLflow. We add a prefix so the two models do not mix up.
-        mlflow.log_params(params)
-        mlflow.log_metrics({f"ml_{k}": v for k, v in ml_metrics.items()})
-        mlflow.log_metrics({f"baseline_{k}": v for k, v in baseline_metrics.items()})
-
-        # Save the confusion matrix and attach the PNG to this MLflow run.
-        cm_path = project_path(model_cfg["confusion_matrix_path"])
-        save_confusion_matrix(y_test, y_pred, f"Confusion matrix: {run_name}", cm_path)
-        mlflow.log_artifact(str(cm_path))
-        logger.info("Saved confusion matrix to %s", cm_path)
-
-        # Save the model in MLflow AND register it in the Model Registry.
-        # Each run creates a new "version" of "sms-fraud-classifier".
-        mlflow.sklearn.log_model(
-            model,
-            name="model",
-            registered_model_name=mlflow_cfg["registered_model_name"],
-        )
-
-    # Also save files on disk, so DVC can track them.
-    model_path = project_path(model_cfg["model_path"])
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, model_path)
-    logger.info("Saved model to %s", model_path)
-
-    metrics_path = project_path(model_cfg["metrics_path"])
+    # metrics.json is kept in Git (DVC "metrics"), and promote.py reads it.
+    metrics_path = project_path(cfg["model"]["metrics_path"])
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump({"run": run_name, "ml_model": ml_metrics, "baseline": baseline_metrics}, f, indent=2)
-    logger.info("Saved metrics to %s", metrics_path)
+        json.dump({"runs": runs, "baseline_rules": baseline}, f, indent=2)
+    logger.info("Saved metrics of %d runs to %s", len(runs), metrics_path)
 
 
 if __name__ == "__main__":

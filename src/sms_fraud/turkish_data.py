@@ -1,10 +1,13 @@
-"""Prepare the Turkish SMS dataset (for monitoring, NOT for training yet).
+"""Prepare the Turkish SMS dataset (for monitoring AND, since Step 5b, training).
 
 Run it with:
     python -m src.sms_fraud.turkish_data
 
 Input:  data/external/TurkishSMSCollection.csv  (tracked with DVC)
-Output: data/processed/turkish.csv  (columns: label, message)
+Output (columns: label, message, lang):
+    data/processed/turkish.csv        all clean rows
+    data/processed/turkish_train.csv  80% (for training)
+    data/processed/turkish_test.csv   20% (never trained on, for scoring)
 
 Raw file format: separator ";", columns Message;Group;GroupText.
 Group 1 = Spam, Group 2 = Normal.
@@ -13,7 +16,7 @@ Group 1 = Spam, Group 2 = Normal.
 import pandas as pd
 
 from src.sms_fraud.config import get_config, project_path
-from src.sms_fraud.data import spam_percent, validate_data
+from src.sms_fraud.data import spam_percent, split_data, validate_data
 from src.sms_fraud.logger import get_logger
 
 logger = get_logger("sms_fraud.turkish_data")
@@ -70,16 +73,27 @@ def main() -> None:
     # Reuse the SAME cleaning rules as for the English data (empty messages,
     # labels, HTML codes, duplicates). Same rules = fair comparison.
     clean = validate_data(df)
+    clean["lang"] = "tr"
 
-    out_path = project_path(get_config()["data"]["turkish_file"])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    clean.to_csv(out_path, index=False, encoding="utf-8")
+    # 80/20 split with the SAME function and settings as the English data:
+    # stratified (same spam share in both parts) and the same random_state
+    # from config.yaml (same split on every run).
+    # validate_data() already removed duplicates, so no message can be in
+    # both train and test (no data leakage).
+    train_df, test_df = split_data(clean)
+
+    cfg = get_config()["data"]
+    outputs = {"turkish_file": clean, "turkish_train_file": train_df, "turkish_test_file": test_df}
+    for key, frame in outputs.items():
+        out_path = project_path(cfg[key])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_csv(out_path, index=False, encoding="utf-8")
+        logger.info("Saved %s (%d rows, spam %.2f%%)", out_path, len(frame), spam_percent(frame))
 
     logger.info("----- Summary -----")
     logger.info("Raw rows:   %d", len(df))
     logger.info("Clean rows: %d (removed %d)", len(clean), len(df) - len(clean))
-    logger.info("Spam:       %.2f%%", spam_percent(clean))
-    logger.info("Saved %s", out_path)
+    logger.info("Train rows: %d | Test rows: %d", len(train_df), len(test_df))
 
 
 if __name__ == "__main__":

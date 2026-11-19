@@ -5,9 +5,11 @@ import json
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import FeatureUnion, Pipeline
 
 from src.sms_fraud.monitoring import compare, psi, write_alert
-from src.sms_fraud.text_stats import oov_ratio
+from src.sms_fraud.text_stats import find_vectorizer, oov_ratio
 
 THRESHOLDS = {"oov_ratio": 0.5, "ks_pvalue": 0.05, "psi": 0.2, "f1_drop": 0.10}
 
@@ -53,6 +55,22 @@ def test_oov_ratio_is_one_for_unknown_words():
 def test_oov_ratio_counts_the_share():
     # "free" is known, "bedava" is not -> 1 of 2 unknown.
     assert oov_ratio(make_vectorizer(), "free bedava") == 0.5
+
+
+def test_oov_ratio_for_char_model_counts_letter_pieces():
+    char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 3)).fit(["tıklayın"])
+    # Same word -> every piece known. A new suffix still shares most pieces.
+    assert oov_ratio(char, "tıklayın") == 0.0
+    assert 0.0 < oov_ratio(char, "tıklayınız") < 0.5
+
+
+def test_find_vectorizer_picks_word_part_of_feature_union():
+    union = FeatureUnion([("word", TfidfVectorizer()), ("char", TfidfVectorizer(analyzer="char_wb"))])
+    pipeline = Pipeline([("tfidf", union), ("clf", LogisticRegression())])
+    assert find_vectorizer(pipeline).analyzer == "word"
+    # A plain pipeline: the vectorizer itself.
+    single = Pipeline([("tfidf", TfidfVectorizer()), ("clf", LogisticRegression())])
+    assert find_vectorizer(single) is single.named_steps["tfidf"]
 
 
 # ----- Alerts -----

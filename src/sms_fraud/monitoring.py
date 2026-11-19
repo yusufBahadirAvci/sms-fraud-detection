@@ -1,10 +1,12 @@
 """Monitoring: is the data the model sees today different from its training world?
 
 We compare two "windows" of messages:
-- REFERENCE: the English test set (data the model was built for).
+- REFERENCE: the COMBINED test set = English test + Turkish test (since
+             Step 5b the model is built for both languages).
 - CURRENT:   new data. Two modes:
-    dataset mode: the labelled Turkish dataset (we know the true answers,
-                  so we can also measure accuracy, F1, ...)
+    dataset mode: the labelled Turkish TEST set (we know the true answers,
+                  so we can also measure accuracy, F1, ...). We use the test
+                  part only: the model was trained on the other 80%.
     log mode:     live API traffic from logs/predictions.jsonl (no true
                   answers, and no message text - only numbers we logged)
 
@@ -12,6 +14,7 @@ Run it with:
     python -m src.sms_fraud.monitoring                                  (dataset mode)
     python -m src.sms_fraud.monitoring --mode log                       (whole log)
     python -m src.sms_fraud.monitoring --mode log --skip 100 --take 100 (log lines 101-200)
+    python -m src.sms_fraud.monitoring --model-path old.joblib --out-dir reports/x (another model)
 
 Outputs (in reports/monitoring/ or the --out-dir folder):
     drift_report.md, probability_hist.png, length_hist.png,
@@ -35,8 +38,8 @@ from scipy.stats import ks_2samp  # noqa: E402
 
 from src.sms_fraud.config import get_config, project_path  # noqa: E402
 from src.sms_fraud.logger import get_logger  # noqa: E402
-from src.sms_fraud.text_stats import oov_ratio  # noqa: E402
-from src.sms_fraud.train import LABEL_MAP, evaluate, load_split  # noqa: E402
+from src.sms_fraud.text_stats import find_vectorizer, oov_ratio  # noqa: E402
+from src.sms_fraud.train import evaluate, load_test_sets  # noqa: E402
 
 logger = get_logger("sms_fraud.monitoring")
 
@@ -87,7 +90,8 @@ def score_messages(model, messages: pd.Series, threshold: float) -> pd.DataFrame
     """
     messages = messages.tolist()
     probabilities = model.predict_proba(messages)[:, 1]
-    vectorizer = model.named_steps["tfidf"]
+    # The word vectorizer (or the char one for a char-only model), see text_stats.py.
+    vectorizer = find_vectorizer(model)
     return pd.DataFrame(
         {
             "length": [len(m) for m in messages],
@@ -188,13 +192,15 @@ def fmt(value) -> str:
     return str(value)
 
 
-def write_report(rows, alerts, out_dir: Path, current_name: str, n_ref: int, n_cur: int) -> Path:
+def write_report(rows, alerts, out_dir: Path, ref_name: str, current_name: str, n_ref: int, n_cur: int,
+                 model_name: str = "") -> Path:
     """Write drift_report.md: one table + list of alerts."""
     lines = [
         "# Drift Report",
         "",
         f"- Created: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        f"- Reference: English test set ({n_ref} messages)",
+        f"- Model: {model_name}",
+        f"- Reference: {ref_name} ({n_ref} messages)",
         f"- Current: {current_name} ({n_cur} messages)",
         f"- Result: **{'DRIFT ALERT' if alerts else 'no drift detected'}**",
         "",
@@ -248,7 +254,7 @@ def plot_histograms(ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current
     ]
     for column, bins, xlabel, filename in charts:
         fig, ax = plt.subplots(figsize=(7, 4))
-        for df, label, color in ((ref, "reference: English test", "tab:blue"), (cur, f"current: {current_name}", "tab:orange")):
+        for df, label, color in ((ref, "reference: combined test", "tab:blue"), (cur, f"current: {current_name}", "tab:orange")):
             # weights = 1/n turns counts into SHARES, so windows of different
             # sizes can be compared. alpha=0.5 keeps both colors visible.
             ax.hist(df[column], bins=bins, weights=np.ones(len(df)) / len(df), alpha=0.5, label=label, color=color)
@@ -286,6 +292,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--skip", type=int, default=0, help="log mode: skip the first N log lines.")
     parser.add_argument("--take", type=int, default=None, help="log mode: use only N lines after --skip.")
     parser.add_argument("--out-dir", default=None, help="Folder for the outputs (default from config).")
+    parser.add_argument("--model-path", default=None,
+                        help="Model file to check (default: the champion, models/model.joblib).")
     return parser.parse_args(argv)
 
 
@@ -295,18 +303,22 @@ def main(argv=None) -> list[str]:
     mon_cfg = cfg["monitoring"]
     threshold = cfg["api"]["threshold"]
 
-    model = joblib.load(project_path(cfg["model"]["model_path"]))
+    model_path = Path(args.model_path) if args.model_path else project_path(cfg["model"]["model_path"])
+    model = joblib.load(model_path)
 
-    # REFERENCE window: the English test set, with true labels.
-    X_ref, y_ref = load_split("test")
+    # REFERENCE window: English test + Turkish test, with true labels.
+    test_sets = load_test_sets()
+    X_ref = pd.concat([test_sets["en"][0], test_sets["tr"][0]], ignore_index=True)
+    y_ref = pd.concat([test_sets["en"][1], test_sets["tr"][1]], ignore_index=True)
     ref = score_messages(model, X_ref, threshold)
     ref_metrics = evaluate(y_ref, ref["prediction"].astype(int))
+    ref_name = "Combined test set (English + Turkish)"
 
     if args.mode == "dataset":
-        turkish = pd.read_csv(project_path(cfg["data"]["turkish_file"]), encoding="utf-8", keep_default_na=False)
-        cur = score_messages(model, turkish["message"], threshold)
-        cur_metrics = evaluate(turkish["label"].map(LABEL_MAP), cur["prediction"].astype(int))
-        current_name = "Turkish SMS dataset"
+        X_cur, y_cur = test_sets["tr"]
+        cur = score_messages(model, X_cur, threshold)
+        cur_metrics = evaluate(y_cur, cur["prediction"].astype(int))
+        current_name = "Turkish test set"
         default_out = mon_cfg["output_dir"]
     else:
         cur = load_log_window(project_path(cfg["api"]["predictions_log"]), args.skip, args.take)
@@ -320,11 +332,11 @@ def main(argv=None) -> list[str]:
 
     rows, alerts = compare(ref, cur, mon_cfg["thresholds"], mon_cfg["psi_bins"], ref_metrics, cur_metrics)
 
-    report = write_report(rows, alerts, out_dir, current_name, len(ref), len(cur))
+    report = write_report(rows, alerts, out_dir, ref_name, current_name, len(ref), len(cur), model_path.name)
     plot_histograms(ref, cur, out_dir, current_name)
     alert_file = write_alert(alerts, out_dir, current_name)
 
-    logger.info("Compared English test (%d) vs %s (%d)", len(ref), current_name, len(cur))
+    logger.info("Compared %s (%d) vs %s (%d)", ref_name, len(ref), current_name, len(cur))
     for alert in alerts:
         # WARNING level: in a real system, a log tool could send these to a chat or e-mail.
         logger.warning("DRIFT ALERT: %s", alert)

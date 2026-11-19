@@ -23,7 +23,7 @@ from src.sms_fraud.schemas import (
     PredictRequest,
     PredictResponse,
 )
-from src.sms_fraud.text_stats import oov_ratio
+from src.sms_fraud.text_stats import find_vectorizer, oov_ratio
 
 logger = get_logger("sms_fraud.api")
 
@@ -44,9 +44,10 @@ class ModelService:
         self.pipeline = pipeline
         self.version = version
         self.threshold = threshold
-        # The TF-IDF step of the pipeline. We need its vocabulary to compute
-        # the OOV ratio (share of unknown words) for monitoring.
-        self.vectorizer = pipeline.named_steps["tfidf"]
+        # The TF-IDF vectorizer of the pipeline. We need its vocabulary to
+        # compute the OOV ratio (share of unknown words) for monitoring.
+        # find_vectorizer also works for word+char models (Step 5b).
+        self.vectorizer = find_vectorizer(pipeline)
 
     def oov_ratios(self, messages: list[str]) -> list[float]:
         """Share of unknown words for each message (0.0 = all known, 1.0 = all unknown)."""

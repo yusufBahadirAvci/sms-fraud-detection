@@ -5,64 +5,70 @@ stages:
     deps:
     - path: config/config.yaml
       hash: md5
-      md5: 78a1506e17a9947a30cfc53cf1147fbd
-      size: 3614
+      md5: 0006dd096e08feca33df0072c3987430
+      size: 5598
     - path: src/sms_fraud/data.py
       hash: md5
-      md5: e4b79f49548cfd6526ffdb1b1769969e
-      size: 6717
+      md5: 051e8f6cca788cfa42f7db7cc64e812d
+      size: 6879
     outs:
     - path: data/processed/test.csv
       hash: md5
-      md5: 0dbd83bce3a4d3100280b3f94a691b83
-      size: 88060
+      md5: 85dc4001926f504aa71047ae558c9486
+      size: 91161
     - path: data/processed/train.csv
       hash: md5
-      md5: 7b897ed45f71f621edbf51a6112309da
-      size: 353437
+      md5: 53f2ecb77617ace3f007e433e2afa99c
+      size: 365826
   train:
     cmd: python -m src.sms_fraud.train
     deps:
     - path: config/config.yaml
       hash: md5
-      md5: 78a1506e17a9947a30cfc53cf1147fbd
-      size: 3614
+      md5: 0006dd096e08feca33df0072c3987430
+      size: 5598
+    - path: data/processed/combined_train.csv
+      hash: md5
+      md5: feb4442916f660d01348ea922fe871b8
+      size: 849605
     - path: data/processed/test.csv
       hash: md5
-      md5: 0dbd83bce3a4d3100280b3f94a691b83
-      size: 88060
-    - path: data/processed/train.csv
+      md5: 85dc4001926f504aa71047ae558c9486
+      size: 91161
+    - path: data/processed/turkish_test.csv
       hash: md5
-      md5: 7b897ed45f71f621edbf51a6112309da
-      size: 353437
+      md5: d37947ff9685e642d60b8f44ba213d3a
+      size: 119971
     - path: src/sms_fraud/train.py
       hash: md5
-      md5: ab9da732ccb71b115ff3fce637e60d19
-      size: 10657
+      md5: 8c6c198cee4c079f2229bcd42c717224
+      size: 15222
     outs:
-    - path: models/model.joblib
+    - path: models/candidates
       hash: md5
-      md5: 9eaeceb15e05d24ae34fa3cb3c499429
-      size: 226772
-    - path: reports/confusion_matrix.png
+      md5: 2a4b64b0bc64a7b13d1e10137c457d3e.dir
+      size: 2146828
+      nfiles: 3
+    - path: reports/confusion_matrices
       hash: md5
-      md5: a03c9a0acbc6eed5f7692b6af8282448
-      size: 17749
+      md5: 583c0ed37487b0e880f888f0c5b96409.dir
+      size: 94761
+      nfiles: 6
     - path: reports/metrics.json
       hash: md5
-      md5: 6e4187df0a3a0c1ab8fda059e2af9ae4
-      size: 325
+      md5: ab2c382e082e43012ffabb64d9dbb3e9
+      size: 2894
   eda:
     cmd: python -m src.sms_fraud.eda
     deps:
     - path: data/processed/test.csv
       hash: md5
-      md5: 0dbd83bce3a4d3100280b3f94a691b83
-      size: 88060
+      md5: 85dc4001926f504aa71047ae558c9486
+      size: 91161
     - path: data/processed/train.csv
       hash: md5
-      md5: 7b897ed45f71f621edbf51a6112309da
-      size: 353437
+      md5: 53f2ecb77617ace3f007e433e2afa99c
+      size: 365826
     - path: src/sms_fraud/eda.py
       hash: md5
       md5: 6f018f7c0a3e3d5c641fd2bbfc2cdd8d
@@ -86,55 +92,87 @@ stages:
     deps:
     - path: config/config.yaml
       hash: md5
-      md5: 78a1506e17a9947a30cfc53cf1147fbd
-      size: 3614
+      md5: 0006dd096e08feca33df0072c3987430
+      size: 5598
     - path: data/external/TurkishSMSCollection.csv
       hash: md5
       md5: 5559a73753f1a45c9e935ee07f505fba
       size: 605233
     - path: src/sms_fraud/data.py
       hash: md5
-      md5: e4b79f49548cfd6526ffdb1b1769969e
-      size: 6717
+      md5: 051e8f6cca788cfa42f7db7cc64e812d
+      size: 6879
     - path: src/sms_fraud/turkish_data.py
       hash: md5
-      md5: e4853c98b70e54c5b0441f03a851399b
-      size: 3323
+      md5: 41bec04a4cfe295ca7b8aab78d425d59
+      size: 4125
     outs:
     - path: data/processed/turkish.csv
       hash: md5
-      md5: b5b0ef4ef449dc2cc4f69df9d745b0a8
-      size: 589534
+      md5: f797a3970b64982ca4174edafe559ccd
+      size: 603750
+    - path: data/processed/turkish_test.csv
+      hash: md5
+      md5: d37947ff9685e642d60b8f44ba213d3a
+      size: 119971
+    - path: data/processed/turkish_train.csv
+      hash: md5
+      md5: d28e31339553d19df81f8b1e8d537b1d
+      size: 483799
   monitor:
     cmd: python -m src.sms_fraud.monitoring
     deps:
     - path: config/config.yaml
       hash: md5
-      md5: 78a1506e17a9947a30cfc53cf1147fbd
-      size: 3614
+      md5: 0006dd096e08feca33df0072c3987430
+      size: 5598
     - path: data/processed/test.csv
       hash: md5
-      md5: 0dbd83bce3a4d3100280b3f94a691b83
-      size: 88060
-    - path: data/processed/turkish.csv
+      md5: 85dc4001926f504aa71047ae558c9486
+      size: 91161
+    - path: data/processed/turkish_test.csv
       hash: md5
-      md5: b5b0ef4ef449dc2cc4f69df9d745b0a8
-      size: 589534
+      md5: d37947ff9685e642d60b8f44ba213d3a
+      size: 119971
     - path: models/model.joblib
       hash: md5
-      md5: 9eaeceb15e05d24ae34fa3cb3c499429
-      size: 226772
+      md5: bbae9709c1b8e744b60f720f99eda3f1
+      size: 844660
     - path: src/sms_fraud/monitoring.py
       hash: md5
-      md5: 23eb7aedd2346b93ef56c8742c9eeaca
-      size: 14578
+      md5: f3ff7ad3d0df752db39b5616e315b918
+      size: 15715
     - path: src/sms_fraud/text_stats.py
       hash: md5
-      md5: 2d4b359dfe731873700eea32c5e41d8c
-      size: 1320
+      md5: 47a1fc34921cde441d74fab77dad1aee
+      size: 2387
+    - path: src/sms_fraud/train.py
+      hash: md5
+      md5: 8c6c198cee4c079f2229bcd42c717224
+      size: 15222
     outs:
     - path: reports/monitoring
       hash: md5
-      md5: df4b22210a29c30d3db8bbcd066db6d4.dir
-      size: 63778
+      md5: 99c032b83683515dd8c3affb1f720663.dir
+      size: 61638
       nfiles: 4
+  combine:
+    cmd: python -m src.sms_fraud.combine_data
+    deps:
+    - path: data/processed/train.csv
+      hash: md5
+      md5: 53f2ecb77617ace3f007e433e2afa99c
+      size: 365826
+    - path: data/processed/turkish_train.csv
+      hash: md5
+      md5: d28e31339553d19df81f8b1e8d537b1d
+      size: 483799
+    - path: src/sms_fraud/combine_data.py
+      hash: md5
+      md5: 9d8fcc8d7f48415392bf66e2ccc2c5b0
+      size: 1743
+    outs:
+    - path: data/processed/combined_train.csv
+      hash: md5
+      md5: feb4442916f660d01348ea922fe871b8
+      size: 849605

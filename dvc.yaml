@@ -4,9 +4,19 @@
 #
 # Order (DVC finds it from the deps):
 #   prepare ---------> eda
-#      |    \--------> train ---\
-#      |                         > monitor
-#   prepare_turkish ------------/
+#      |    \
+#      |     > combine -----> train  (candidates A, B, C + metrics.json)
+#   prepare_turkish /           |
+#                               v
+#                   [promote.py, by hand]  -> models/model.joblib
+#                                                    |
+#   test sets ----------------------------------> monitor
+#
+# Why is promotion NOT a DVC stage? Its result depends on the CURRENT
+# production model (the champion), not only on files in this repo. DVC
+# stages must give the same output for the same inputs. So promote.py runs
+# by hand, and models/model.joblib is tracked by "dvc add"
+# (models/model.joblib.dvc) instead of being a stage output.
 stages:
   prepare:
     cmd: python -m src.sms_fraud.data
@@ -16,7 +26,7 @@ stages:
       - src/sms_fraud/data.py
       - config/config.yaml
     # We list the two files, not the whole data/processed folder. Why? Two
-    # stages cannot own the same folder, and prepare_turkish also writes
+    # stages cannot own the same folder, and other stages also write
     # into data/processed.
     outs:
       - data/processed/train.csv
@@ -28,11 +38,23 @@ stages:
       # The raw file is tracked by DVC (TurkishSMSCollection.csv.dvc).
       - data/external/TurkishSMSCollection.csv
       - src/sms_fraud/turkish_data.py
-      # turkish_data.py reuses validate_data() from here.
+      # turkish_data.py reuses validate_data() and split_data() from here.
       - src/sms_fraud/data.py
       - config/config.yaml
     outs:
       - data/processed/turkish.csv
+      - data/processed/turkish_train.csv
+      - data/processed/turkish_test.csv
+
+  combine:
+    # English train + Turkish train -> one train set with a "lang" column.
+    cmd: python -m src.sms_fraud.combine_data
+    deps:
+      - data/processed/train.csv
+      - data/processed/turkish_train.csv
+      - src/sms_fraud/combine_data.py
+    outs:
+      - data/processed/combined_train.csv
 
   eda:
     cmd: python -m src.sms_fraud.eda
@@ -47,34 +69,40 @@ stages:
       - reports/eda_summary.md
 
   train:
+    # Runs A, B, C from config.yaml. Writes CANDIDATES only; it does not
+    # touch models/model.joblib (promote.py decides that).
     cmd: python -m src.sms_fraud.train
     deps:
-      - data/processed/train.csv
+      - data/processed/combined_train.csv
+      # The two test sets, kept separate (en_ and tr_ metrics).
       - data/processed/test.csv
+      - data/processed/turkish_test.csv
       - src/sms_fraud/train.py
       - config/config.yaml
     outs:
-      - models/model.joblib
+      - models/candidates
     metrics:
       # cache: false -> this small JSON file is saved in Git (not in the DVC
       # cache), so we can see metric changes in "git diff" and "dvc metrics".
       - reports/metrics.json:
           cache: false
     plots:
-      # The confusion matrix image of the pipeline model. Also kept in Git.
-      - reports/confusion_matrix.png:
+      # One confusion matrix per run and language. Also kept in Git.
+      - reports/confusion_matrices:
           cache: false
 
   monitor:
-    # Dataset mode: English test set vs labelled Turkish data.
+    # Dataset mode: combined test set (reference) vs Turkish test set (current).
     cmd: python -m src.sms_fraud.monitoring
     deps:
+      # Tracked by models/model.joblib.dvc (written by promote.py).
       - models/model.joblib
       - data/processed/test.csv
-      - data/processed/turkish.csv
+      - data/processed/turkish_test.csv
       # The code and the thresholds (in config.yaml) also change the result.
       - src/sms_fraud/monitoring.py
       - src/sms_fraud/text_stats.py
+      - src/sms_fraud/train.py
       - config/config.yaml
     outs:
       - reports/monitoring

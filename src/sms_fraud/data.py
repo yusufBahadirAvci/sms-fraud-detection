@@ -172,6 +172,9 @@ def main() -> None:
     download_data()
     raw_df = load_data()
     clean_df = validate_data(raw_df)
+    # Mark the language of every row. Since Step 5b we mix English and
+    # Turkish data, and need to know where each row came from.
+    clean_df["lang"] = "en"
     train_df, test_df = split_data(clean_df)
     save_data(train_df, test_df)
 
