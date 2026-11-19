@@ -12,6 +12,9 @@ data:
   raw_file: "SMSSpamCollection"
   # Folder for the cleaned and split files.
   processed_dir: "data/processed"
+  # All clean English rows before the split (Step 7a). leakage.py needs
+  # them to rebuild the OLD random split and compare it with the new one.
+  english_file: "data/processed/english.csv"
   # Turkish SMS data (tracked with DVC, not Git). Step 5a used it to measure
   # drift; Step 5b also trains on it.
   turkish_raw_file: "data/external/TurkishSMSCollection.csv"
@@ -30,6 +33,23 @@ split:
   # A fixed "seed" makes the random split the same every time we run it.
   # This makes our results reproducible.
   random_state: 42
+
+leakage:
+  # Two messages are "near-duplicates" if the cosine similarity of their
+  # char TF-IDF vectors (on normalized text) is at least this value.
+  # Since Step 7a, near-duplicates form a "cluster", and the split puts a
+  # whole cluster into train OR test, never both (see data.py).
+  similarity_threshold: 0.9
+  # Example pairs per language in the report.
+  n_examples: 5
+  report_path: "reports/leakage.md"
+
+challenge:
+  # 40 hand-written Turkish messages (20 phishing, 20 normal).
+  # For EVALUATION ONLY: never used for training or tuning.
+  file: "data/challenge/tr_phishing.csv"
+  report_path: "reports/challenge.md"
+  metrics_path: "reports/challenge.json"
 
 model:
   # Hyperparameters = settings we choose BEFORE training.
@@ -102,9 +122,12 @@ api:
   predictions_log: "logs/predictions.jsonl"
 
 monitoring:
-  # Reference window (Step 5b): the COMBINED test set = English test +
-  # Turkish test, because the model is now built for both languages.
-  # Dataset mode: reference vs Turkish test set. Made by the DVC "monitor" stage.
+  # Since Step 7a: one reference window PER LANGUAGE (en, tr), so a change
+  # in the language mix is no longer reported as drift.
+  # reference_share: this part of each language's test set (fixed seed from
+  # "split") is the reference; dataset mode uses the rest as "current".
+  reference_share: 0.5
+  # Dataset mode output. Made by the DVC "monitor" stage.
   output_dir: "reports/monitoring"
   # Log mode (reference vs live API traffic). Not part of DVC.
   live_output_dir: "reports/monitoring_live"

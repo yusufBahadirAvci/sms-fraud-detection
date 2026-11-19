@@ -289,7 +289,8 @@ def run_experiment(experiment: dict, X_train, y_train, test_sets: dict, cfg: dic
 
         mlflow.log_params(params)
         # Tags are free text labels. They help to find these runs later.
-        mlflow.set_tags({"step": "5b", "train_data": "combined_en_tr"})
+        # "clean_split": since Step 7a, near-duplicates never cross train/test.
+        mlflow.set_tags({"step": "7a", "train_data": "combined_en_tr", "split": "clean_split"})
         mlflow.log_metrics(scores)
 
         # One confusion matrix per language, saved on disk AND in MLflow.

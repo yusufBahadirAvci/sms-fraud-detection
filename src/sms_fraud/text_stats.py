@@ -4,6 +4,62 @@ This file has NO heavy imports (no pandas, scipy, matplotlib), so the small
 API Docker image can use it too.
 """
 
+import re
+
+# ---------------------------------------------------------------------------
+# Language detection (Step 7a): "en" or "tr"
+# ---------------------------------------------------------------------------
+
+# Letters that exist ONLY in Turkish (not in English or German). One of
+# them is enough. "ö" and "ü" are NOT here: the English UCI data uses "ü"
+# as a short form of "you" ("how ü doing"), so they only add one vote below.
+TURKISH_ONLY_LETTERS = set("çğışÇĞİŞ")
+TURKISH_VOTE_LETTERS = set("öüÖÜ")
+
+# Very common short words. Many Turkish SMS are typed WITHOUT Turkish
+# letters ("icin" instead of "için"), so we also need words. We keep both
+# spellings. Words that also exist in English (like "a", "o", "sms") are left out.
+TURKISH_STOPWORDS = {
+    "ve", "bu", "bir", "icin", "ile", "da", "de", "mi", "mu", "ne", "cok", "ama",
+    "gibi", "var", "yok", "ben", "sen", "biz", "siz", "evet", "hayir", "tamam",
+    "degil", "daha", "kadar", "simdi", "nasil", "olarak", "size", "sizi", "hemen",
+    "tl", "lira", "her", "abi", "yarin", "bugun", "iyi", "misin", "musun", "neden",
+    "veya", "ucretsiz", "indirim", "kampanya", "sizin", "bizim", "merhaba", "selam",
+    "tamamdir", "tesekkurler", "sagol", "canim", "ay", "gun", "hafta", "sonra", "en",
+    "yeni", "ozel", "ilk", "bilgi", "iptal", "yazip",
+}  # fmt: skip
+ENGLISH_STOPWORDS = {
+    "the", "to", "you", "and", "is", "a", "i", "it", "in", "for", "your", "my",
+    "me", "of", "on", "have", "are", "be", "at", "this", "that", "with", "u",
+    "ur", "we", "not", "will", "can", "do", "so", "but", "get", "call", "now",
+    "free", "just", "what", "how", "if", "or", "no", "ok", "go", "from", "all",
+}  # fmt: skip
+
+
+# PATTERN: Strategy — language detection is one small pure function. The API and monitoring only
+#   call detect_language(), so a better detector (e.g. a real model) can replace it in one place.
+def detect_language(message: str) -> str:
+    """Guess the language of one message: "tr" or "en".
+
+    Simple rules (no model, no extra package, very fast):
+    1. Any Turkish-only letter (ç, ğ, ı, ş, İ) -> "tr".
+    2. Otherwise count votes: each Turkish stopword and each "ö"/"ü" is one
+       Turkish vote, each English stopword one English vote.
+       More Turkish votes -> "tr".
+    3. A tie (also: no known word at all, like ":)") -> "en".
+    Not perfect, but good enough to send each message to the right
+    monitoring window. Its accuracy is in reports/monitoring/drift_report.md.
+    """
+    if any(ch in TURKISH_ONLY_LETTERS for ch in message):
+        return "tr"
+    # Turkish adds suffixes after an apostrophe: "7889'a", "Ankara'da".
+    # Drop them, so "a" is not counted as the English word "a".
+    words = re.findall(r"\w+", re.sub(r"['’]\w+", "", message.lower()))
+    turkish = sum(word in TURKISH_STOPWORDS for word in words)
+    turkish += sum(ch in TURKISH_VOTE_LETTERS for ch in message)
+    english = sum(word in ENGLISH_STOPWORDS for word in words)
+    return "tr" if turkish > english else "en"
+
 
 def find_vectorizer(pipeline):
     """Return the TF-IDF vectorizer we use to measure unknown words.

@@ -34,12 +34,28 @@ dvc push                                # after "dvc repro" or "dvc add": upload
 
 ## Build data and model (DVC pipeline)
 ```powershell
-dvc repro                         # prepare, prepare_turkish, combine, eda, train (runs A/B/C), monitor
+dvc repro                         # prepare, prepare_turkish, leakage, combine, eda, train (A/B/C), challenge, monitor
 .\.venv\Scripts\mlflow.exe ui --backend-store-uri sqlite:///mlruns/mlflow.db   # http://127.0.0.1:5000
 ```
 The model is trained on English + Turkish (`combined_train.csv`) and scored on each
 language's test set separately (`en_*` / `tr_*` metrics). Training only writes
 candidates (`models/candidates/`); it never replaces the served model.
+
+## Trustworthy results (Step 7a)
+- **Leakage check** (`leakage.py` -> `reports/leakage.md`): the old random split had
+  near-copies of test messages in train (English 5.1%, Turkish 11.4% of test rows;
+  similarity >= 0.9 on normalized text).
+- **Clean split**: near-duplicates are grouped into clusters, and a whole cluster goes to
+  train OR test (`data.py`, `leakage_safe_split`). The clean split has 0 leaked rows.
+- **Retrained on the clean split** (`reports/metrics.json`; old numbers in
+  `reports/metrics_old_split.json`): Turkish F1 stays very high (B_char 0.998), so the
+  high score was NOT mainly caused by leakage. The Kaggle Turkish data is simply easy
+  (mostly advertising spam vs. personal messages).
+- **Caveat**: the current champion was trained on the OLD split, which contains ~80% of the
+  new test rows. Its scores on the clean test sets are therefore too optimistic, and the
+  promotion rule compares it unfairly (`reports/promotion.md`).
+- **Challenge set** (`data/challenge/tr_phishing.csv`, evaluation only, never trained on):
+  40 hand-written Turkish messages (modern phishing vs. normal). Results in `reports/challenge.md`.
 
 ## Promote a new model (champion / challenger)
 ```powershell
@@ -79,12 +95,14 @@ curl.exe -X POST http://localhost:8000/predict -H "Content-Type: application/jso
 
 ## Monitoring (drift)
 ```powershell
-dvc repro monitor                                           # combined test (en+tr) vs Turkish test -> reports/monitoring/
+dvc repro monitor                                           # per language: half of each test set vs the other half -> reports/monitoring/
 python scripts/simulate_traffic.py                          # API must run: 100 English + 100 Turkish requests
-python -m src.sms_fraud.monitoring --mode log --take 100 --out-dir reports/monitoring_live/english
-python -m src.sms_fraud.monitoring --mode log --skip 100 --take 100 --out-dir reports/monitoring_live/turkish
+python -m src.sms_fraud.monitoring --mode log               # live log, split by the logged "lang"
 ```
-A crossed threshold logs `DRIFT ALERT: ...` and writes `alert.json` next to `drift_report.md`.
+Since Step 7a every language has its **own** reference window, and `drift_report.md` has one
+table per language. The API logs the detected language (`lang`, from `text_stats.detect_language`:
+Turkish-only letters + small stopword lists; about 99% right on English, 93% on Turkish).
+A crossed threshold logs `DRIFT ALERT: [lang] ...` and writes `alert.json` next to `drift_report.md`.
 Thresholds are in `config/config.yaml` (`monitoring:`).
 
 The raw Turkish file is tracked with DVC (`data/external/TurkishSMSCollection.csv.dvc`), not Git.

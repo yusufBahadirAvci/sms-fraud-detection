@@ -4,12 +4,13 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import FeatureUnion, Pipeline
 
-from src.sms_fraud.monitoring import compare, psi, write_alert
-from src.sms_fraud.text_stats import find_vectorizer, oov_ratio
+from src.sms_fraud.monitoring import compare, compare_by_language, psi, write_alert, write_report
+from src.sms_fraud.text_stats import detect_language, find_vectorizer, oov_ratio
 
 THRESHOLDS = {"oov_ratio": 0.5, "ks_pvalue": 0.05, "psi": 0.2, "f1_drop": 0.10}
 
@@ -121,3 +122,62 @@ def test_alert_file_is_written_and_removed(tmp_path):
     # No alerts on the next run -> the old file must be deleted.
     assert write_alert([], tmp_path, "test window") is None
     assert not path.exists()
+
+
+# ----- Language detector (Step 7a) -----
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        # Turkish-only letters -> "tr" at once.
+        ("Kargonuz teslim edilemedi, adresinizi güncelleyin", "tr"),
+        # Turkish typed WITHOUT Turkish letters: found by stopwords.
+        ("Yarin sabah bulusalim mi, simdi cok yorgunum", "tr"),
+        # Apostrophe suffix "'a" must not count as the English word "a".
+        ("KAMPANYA BITTI. SMS ALMAMAK ICIN RET YAZIP 7889'A GONDERIN", "tr"),
+        ("Are you coming to the party tonight?", "en"),
+        # "ü" means "you" in the English UCI data: must stay English.
+        ("How ü doing? I will call u later", "en"),
+        # No known word at all -> the default, "en".
+        (":)", "en"),
+    ],
+)
+def test_detect_language(message, expected):
+    assert detect_language(message) == expected
+
+
+# ----- Per-language monitoring (Step 7a) -----
+
+
+def test_each_language_gets_its_own_table(tmp_path):
+    # English: short messages; Turkish: long ones. Each current window looks
+    # like ITS OWN reference, so there must be no alert at all. (With ONE
+    # mixed reference, the length difference would look like drift.)
+    en = make_window(oov=0.1, length=60, prob=0.1)
+    tr = make_window(oov=0.1, length=130, prob=0.6)
+    metrics = {"accuracy": 0.99, "precision": 0.99, "recall": 0.95, "f1": 0.97}
+    refs = {"en": (en, metrics), "tr": (tr, metrics)}
+    cur = pd.concat([en.assign(lang="en"), tr.assign(lang="tr")], ignore_index=True)
+
+    sections = compare_by_language(refs, cur, THRESHOLDS, 10, {"en": metrics, "tr": metrics})
+    assert set(sections) == {"en", "tr"}
+    assert all(sec["alerts"] == [] for sec in sections.values())
+    assert sections["en"]["n_cur"] == len(en) and sections["tr"]["n_cur"] == len(tr)
+
+    report = write_report(sections, tmp_path, "test window").read_text(encoding="utf-8")
+    assert "## Language: en" in report and "## Language: tr" in report
+    # Two tables -> two header lines.
+    assert report.count("| Metric | Reference | Current |") == 2
+
+
+def test_alert_names_its_language():
+    en = make_window(oov=0.1, length=60, prob=0.1)
+    refs = {"en": (en, None), "tr": (make_window(oov=0.1, length=130, prob=0.6), None)}
+    # Only the Turkish current window is strange (most words unknown).
+    cur = pd.concat(
+        [en.assign(lang="en"), make_window(oov=0.9, length=130, prob=0.6).assign(lang="tr")]
+    )
+    sections = compare_by_language(refs, cur, THRESHOLDS, 10, {})
+    assert sections["en"]["alerts"] == []
+    assert len(sections["tr"]["alerts"]) == 1 and sections["tr"]["alerts"][0].startswith("[tr]")

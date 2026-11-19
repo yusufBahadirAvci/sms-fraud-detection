@@ -23,7 +23,7 @@ from src.sms_fraud.schemas import (
     PredictRequest,
     PredictResponse,
 )
-from src.sms_fraud.text_stats import find_vectorizer, oov_ratio
+from src.sms_fraud.text_stats import detect_language, find_vectorizer, oov_ratio
 
 logger = get_logger("sms_fraud.api")
 
@@ -153,6 +153,9 @@ def log_predictions(messages: list[str], results: list[PredictResponse], oov: li
                 "probability": result.probability,
                 "prediction": result.is_fraud,
                 "model_version": result.model_version,
+                # Detected language ("en"/"tr", Step 7a): monitoring compares
+                # each language with its own reference window.
+                "lang": detect_language(message),
             }
         )
         # strict=True: the 3 lists must have the same length. They always do;

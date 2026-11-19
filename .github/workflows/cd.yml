@@ -182,8 +182,9 @@ jobs:
         run: dvc pull models/model.joblib data/processed/test.csv data/processed/turkish_test.csv
 
       - name: Run monitoring (dataset mode)
-        # Reference = combined test set, current = Turkish test set.
-        # Known alerts (length KS test, PSI) are NOT hidden: we report them.
+        # Since Step 7a: one reference window PER LANGUAGE (half of each test
+        # set), current = the other halves, routed by the language detector.
+        # Thresholds are unchanged; any alert is reported, never hidden.
         run: python -m src.sms_fraud.monitoring
 
       - name: Upload the monitoring report

@@ -1,0 +1,6 @@
+{
+  "challenge_accuracy": 0.925,
+  "challenge_precision": 1.0,
+  "challenge_recall": 0.85,
+  "challenge_f1": 0.918918918918919
+}

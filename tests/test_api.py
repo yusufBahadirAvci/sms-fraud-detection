@@ -96,7 +96,10 @@ def test_predictions_are_logged(client):
         "probability",
         "prediction",
         "model_version",
+        # Detected language (Step 7a), for per-language monitoring.
+        "lang",
     }
+    assert record["lang"] in {"en", "tr"}
     # We log the LENGTH, never the text itself (privacy).
     assert record["message_length"] == len(FRAUD_TEXT)
     assert "message" not in record

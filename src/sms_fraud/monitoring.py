@@ -1,14 +1,20 @@
 """Monitoring: is the data the model sees today different from its training world?
 
-We compare two "windows" of messages:
-- REFERENCE: the COMBINED test set = English test + Turkish test (since
-             Step 5b the model is built for both languages).
-- CURRENT:   new data. Two modes:
-    dataset mode: the labelled Turkish TEST set (we know the true answers,
-                  so we can also measure accuracy, F1, ...). We use the test
-                  part only: the model was trained on the other 80%.
-    log mode:     live API traffic from logs/predictions.jsonl (no true
-                  answers, and no message text - only numbers we logged)
+Since Step 7a we monitor EACH LANGUAGE SEPARATELY. Why? Up to Step 6 the
+reference was English + Turkish mixed, and the current window was Turkish
+only. Turkish SMS are longer and more often spam, so we got "drift" alerts
+(length KS test, PSI 0.206, Issue #1) that only measured the language MIX,
+not a real change. Now English is compared with English, Turkish with Turkish.
+
+Windows, for each language ("en", "tr"):
+- REFERENCE: a fixed random half of that language's test set (true labels).
+- CURRENT:   new data, sent to a language with detect_language()
+             (live traffic has no "lang" label, so we must guess it). Two modes:
+    dataset mode: the OTHER half of both test sets (we know the true
+                  answers, so we can also measure F1). The model never
+                  trained on any test row.
+    log mode:     live API traffic from logs/predictions.jsonl. The API
+                  logs the detected "lang" per line (no message text).
 
 Run it with:
     python -m src.sms_fraud.monitoring                                  (dataset mode)
@@ -17,7 +23,8 @@ Run it with:
     python -m src.sms_fraud.monitoring --model-path old.joblib --out-dir reports/x (another model)
 
 Outputs (in reports/monitoring/ or the --out-dir folder):
-    drift_report.md, probability_hist.png, length_hist.png,
+    drift_report.md (one table per language),
+    probability_hist_<lang>.png, length_hist_<lang>.png,
     alert.json (only if a threshold is crossed)
 """
 
@@ -38,10 +45,13 @@ from scipy.stats import ks_2samp  # noqa: E402
 
 from src.sms_fraud.config import get_config, project_path  # noqa: E402
 from src.sms_fraud.logger import get_logger  # noqa: E402
-from src.sms_fraud.text_stats import find_vectorizer, oov_ratio  # noqa: E402
+from src.sms_fraud.text_stats import detect_language, find_vectorizer, oov_ratio  # noqa: E402
 from src.sms_fraud.train import evaluate, load_test_sets  # noqa: E402
 
 logger = get_logger("sms_fraud.monitoring")
+
+# The languages we monitor, each with its own reference window.
+LANGUAGES = ("en", "tr")
 
 # PSI smoothing: we add this small count to EVERY bin before computing
 # shares. Why? An empty bin would give log(0), which is not allowed.
@@ -214,41 +224,58 @@ def fmt(value) -> str:
 
 
 def write_report(
-    rows,
-    alerts,
+    sections: dict,
     out_dir: Path,
-    ref_name: str,
     current_name: str,
-    n_ref: int,
-    n_cur: int,
     model_name: str = "",
+    notes: list[str] | None = None,
 ) -> Path:
-    """Write drift_report.md: one table + list of alerts."""
+    """Write drift_report.md: ONE table per language + all alerts.
+
+    sections: {lang: {"rows": [...], "alerts": [...], "n_ref": int, "n_cur": int}}
+    notes: extra lines for the top (e.g. how good the language detector is).
+    """
+    all_alerts = [a for sec in sections.values() for a in sec["alerts"]]
     lines = [
-        "# Drift Report",
+        "# Drift Report (per language)",
         "",
         f"- Created: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         f"- Model: {model_name}",
-        f"- Reference: {ref_name} ({n_ref} messages)",
-        f"- Current: {current_name} ({n_cur} messages)",
-        f"- Result: **{'DRIFT ALERT' if alerts else 'no drift detected'}**",
-        "",
-        "| Metric | Reference | Current | Threshold | Status |",
-        "|---|---|---|---|---|",
-        *[
-            f"| {r['metric']} | {fmt(r['reference'])} | {fmt(r['current'])} "
-            f"| {r['threshold']} | {r['status']} |"
-            for r in rows
-        ],
+        "- Reference: a fixed random half of each language's test set",
+        f"- Current: {current_name}, split by detected language",
+        *[f"- {n}" for n in notes or []],
+        f"- Result: **{'DRIFT ALERT' if all_alerts else 'no drift detected'}**",
+    ]
+    for lang, sec in sections.items():
+        lines += [
+            "",
+            f"## Language: {lang}",
+            "",
+            f"- Reference: {sec['n_ref']} messages | Current: {sec['n_cur']} messages",
+            f"- Result: **{'DRIFT ALERT' if sec['alerts'] else 'no drift detected'}**",
+            "",
+        ]
+        if not sec["rows"]:
+            lines.append("No current messages for this language: nothing to compare.")
+            continue
+        lines += [
+            "| Metric | Reference | Current | Threshold | Status |",
+            "|---|---|---|---|---|",
+            *[
+                f"| {r['metric']} | {fmt(r['reference'])} | {fmt(r['current'])} "
+                f"| {r['threshold']} | {r['status']} |"
+                for r in sec["rows"]
+            ],
+        ]
+    lines += [
         "",
         "## Alerts",
         "",
-        *([f"- {a}" for a in alerts] if alerts else ["None."]),
+        *([f"- {a}" for a in all_alerts] if all_alerts else ["None."]),
         "",
         "## Charts",
         "",
-        "- `probability_hist.png`",
-        "- `length_hist.png`",
+        *[f"- `probability_hist_{lang}.png`, `length_hist_{lang}.png`" for lang in sections],
         "",
     ]
     path = out_dir / "drift_report.md"
@@ -276,21 +303,23 @@ def write_alert(alerts: list[str], out_dir: Path, current_name: str) -> Path | N
     return path
 
 
-def plot_histograms(ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current_name: str) -> None:
-    """Two charts: spam probability and message length, reference vs current."""
+def plot_histograms(
+    ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current_name: str, lang: str
+) -> None:
+    """Two charts for ONE language: spam probability and message length."""
     charts = [
-        ("probability", np.linspace(0, 1, 21), "Spam probability", "probability_hist.png"),
+        ("probability", np.linspace(0, 1, 21), "Spam probability", f"probability_hist_{lang}.png"),
         (
             "length",
             np.linspace(0, 400, 41),
             "Message length (chars, max 400 shown)",
-            "length_hist.png",
+            f"length_hist_{lang}.png",
         ),
     ]
     for column, bins, xlabel, filename in charts:
         fig, ax = plt.subplots(figsize=(7, 4))
         for df, label, color in (
-            (ref, "reference: combined test", "tab:blue"),
+            (ref, f"reference: {lang} test (half)", "tab:blue"),
             (cur, f"current: {current_name}", "tab:orange"),
         ):
             # weights = 1/n turns counts into SHARES, so windows of different
@@ -305,7 +334,7 @@ def plot_histograms(ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current
             )
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Share of messages")
-        ax.set_title(f"{xlabel}: reference vs current")
+        ax.set_title(f"[{lang}] {xlabel}: reference vs current")
         ax.legend()
         fig.tight_layout()
         fig.savefig(out_dir / filename, dpi=120)
@@ -329,7 +358,51 @@ def load_log_window(path: Path, skip: int, take: int | None) -> pd.DataFrame:
     window = log.iloc[skip:end].rename(columns={"message_length": "length"})
     if window.empty:
         raise ValueError(f"The selected window is empty (log has {len(log)} lines).")
-    return window[["length", "oov_ratio", "probability", "prediction"]]
+    # "lang" exists since Step 7a. Older log lines have none: we mark them
+    # "unknown", and main() skips them (we cannot guess without the text).
+    if "lang" not in window:
+        window = window.assign(lang="unknown")
+    window = window.assign(lang=window["lang"].fillna("unknown"))
+    return window[["length", "oov_ratio", "probability", "prediction", "lang"]]
+
+
+def split_reference(messages: pd.Series, share: float, random_state: int) -> tuple:
+    """Cut ONE language's test set into a reference part and a current part.
+
+    Fixed seed -> the same halves every run. Returns (reference rows, current rows).
+    """
+    shuffled = messages.sample(frac=1.0, random_state=random_state).index
+    n_ref = round(len(shuffled) * share)
+    return shuffled[:n_ref], shuffled[n_ref:]
+
+
+# PATTERN: Partitioning — each language gets its OWN reference and current window, and the SAME
+#   compare() runs per partition. So a change in the language mix can no longer look like drift.
+def compare_by_language(
+    refs: dict, cur: pd.DataFrame, thresholds: dict, psi_bins: int, cur_metrics: dict
+) -> dict:
+    """Run compare() once per language.
+
+    refs:        {lang: (scored reference window, reference metrics)}
+    cur:         scored current window with a "lang" column
+    cur_metrics: {lang: metrics} (dataset mode) or {} (log mode, no labels)
+    Returns {lang: {"rows", "alerts", "n_ref", "n_cur"}}; alerts start with "[lang]".
+    """
+    sections = {}
+    for lang, (ref, ref_metrics) in refs.items():
+        cur_lang = cur[cur["lang"] == lang]
+        rows, alerts = [], []
+        if len(cur_lang):
+            rows, alerts = compare(
+                ref, cur_lang, thresholds, psi_bins, ref_metrics, cur_metrics.get(lang)
+            )
+        sections[lang] = {
+            "rows": rows,
+            "alerts": [f"[{lang}] {a}" for a in alerts],
+            "n_ref": len(ref),
+            "n_cur": len(cur_lang),
+        }
+    return sections
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -360,47 +433,67 @@ def main(argv=None) -> list[str]:
     cfg = get_config()
     mon_cfg = cfg["monitoring"]
     threshold = cfg["api"]["threshold"]
+    seed = cfg["split"]["random_state"]
 
     model_path = (
         Path(args.model_path) if args.model_path else project_path(cfg["model"]["model_path"])
     )
     model = joblib.load(model_path)
 
-    # REFERENCE window: English test + Turkish test, with true labels.
+    # Each language's test set -> (reference half, current half).
+    # The reference uses the TRUE language (we know where each file came from).
     test_sets = load_test_sets()
-    X_ref = pd.concat([test_sets["en"][0], test_sets["tr"][0]], ignore_index=True)
-    y_ref = pd.concat([test_sets["en"][1], test_sets["tr"][1]], ignore_index=True)
-    ref = score_messages(model, X_ref, threshold)
-    ref_metrics = evaluate(y_ref, ref["prediction"].astype(int))
-    ref_name = "Combined test set (English + Turkish)"
+    refs, cur_parts = {}, []
+    for lang in LANGUAGES:
+        X, y = test_sets[lang]
+        ref_idx, cur_idx = split_reference(X, mon_cfg["reference_share"], seed)
+        ref = score_messages(model, X[ref_idx], threshold)
+        refs[lang] = (ref, evaluate(y[ref_idx], ref["prediction"].astype(int)))
+        cur_parts.append(pd.DataFrame({"message": X[cur_idx], "y": y[cur_idx], "true_lang": lang}))
 
+    notes = []
     if args.mode == "dataset":
-        X_cur, y_cur = test_sets["tr"]
-        cur = score_messages(model, X_cur, threshold)
-        cur_metrics = evaluate(y_cur, cur["prediction"].astype(int))
-        current_name = "Turkish test set"
+        pool = pd.concat(cur_parts, ignore_index=True)
+        cur = score_messages(model, pool["message"], threshold)
+        # Like live traffic: we do NOT use the true language, we detect it.
+        cur["lang"] = [detect_language(m) for m in pool["message"]]
+        cur_metrics = {}
+        for lang in LANGUAGES:
+            mask = cur["lang"] == lang
+            cur_metrics[lang] = evaluate(pool["y"][mask], cur["prediction"][mask].astype(int))
+        accuracy = (cur["lang"] == pool["true_lang"]).mean()
+        notes.append(f"Language detector accuracy on the current window: {accuracy:.3f}")
+        current_name = "other half of the en + tr test sets"
         default_out = mon_cfg["output_dir"]
     else:
         cur = load_log_window(project_path(cfg["api"]["predictions_log"]), args.skip, args.take)
-        cur_metrics = None  # live traffic has no true labels
-        end = f"{args.skip + len(cur)}"
-        current_name = f"API log lines {args.skip + 1}-{end}"
+        cur_metrics = {}  # live traffic has no true labels
+        unknown = int((cur["lang"] == "unknown").sum())
+        if unknown:
+            notes.append(f"{unknown} log lines without 'lang' (logged before Step 7a) skipped")
+        current_name = f"API log lines {args.skip + 1}-{args.skip + len(cur)}"
         default_out = mon_cfg["live_output_dir"]
 
     out_dir = project_path(args.out_dir or default_out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Old one-window charts (before Step 7a) would be misleading: remove them.
+    for old in ("probability_hist.png", "length_hist.png"):
+        (out_dir / old).unlink(missing_ok=True)
 
-    rows, alerts = compare(
-        ref, cur, mon_cfg["thresholds"], mon_cfg["psi_bins"], ref_metrics, cur_metrics
+    sections = compare_by_language(
+        refs, cur, mon_cfg["thresholds"], mon_cfg["psi_bins"], cur_metrics
     )
+    alerts = [a for sec in sections.values() for a in sec["alerts"]]
 
-    report = write_report(
-        rows, alerts, out_dir, ref_name, current_name, len(ref), len(cur), model_path.name
-    )
-    plot_histograms(ref, cur, out_dir, current_name)
+    report = write_report(sections, out_dir, current_name, model_path.name, notes)
+    for lang, (ref, _) in refs.items():
+        cur_lang = cur[cur["lang"] == lang]
+        if len(cur_lang):
+            plot_histograms(ref, cur_lang, out_dir, current_name, lang)
     alert_file = write_alert(alerts, out_dir, current_name)
 
-    logger.info("Compared %s (%d) vs %s (%d)", ref_name, len(ref), current_name, len(cur))
+    for lang, sec in sections.items():
+        logger.info("[%s] reference %d vs current %d", lang, sec["n_ref"], sec["n_cur"])
     for alert in alerts:
         # WARNING level: in a real system, a log tool could send these to a chat or e-mail.
         logger.warning("DRIFT ALERT: %s", alert)

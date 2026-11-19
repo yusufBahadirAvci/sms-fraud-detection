@@ -1,0 +1,107 @@
+{
+  "runs": {
+    "A_word": {
+      "run_id": "4e5046419fc74865896baee14e01f8d3",
+      "model_version": "12",
+      "candidate_path": "models/candidates/A_word.joblib",
+      "params": {
+        "model": "logreg",
+        "features": "word",
+        "C": 10.0,
+        "alpha": 1.0,
+        "max_features": 5000,
+        "ngram_range": [
+          1,
+          2
+        ],
+        "char_max_features": 20000,
+        "char_ngram_range": [
+          3,
+          5
+        ]
+      },
+      "metrics": {
+        "en_accuracy": 0.9806201550387597,
+        "en_precision": 0.9655172413793104,
+        "en_recall": 0.875,
+        "en_f1": 0.9180327868852459,
+        "tr_accuracy": 0.989451476793249,
+        "tr_precision": 0.9940119760479041,
+        "tr_recall": 0.9861386138613861,
+        "tr_f1": 0.9900596421471173
+      }
+    },
+    "B_char": {
+      "run_id": "cfd12948205e4ae589ad912ce1106e58",
+      "model_version": "13",
+      "candidate_path": "models/candidates/B_char.joblib",
+      "params": {
+        "model": "logreg",
+        "features": "char",
+        "C": 10.0,
+        "alpha": 1.0,
+        "max_features": 5000,
+        "ngram_range": [
+          1,
+          2
+        ],
+        "char_max_features": 20000,
+        "char_ngram_range": [
+          3,
+          5
+        ]
+      },
+      "metrics": {
+        "en_accuracy": 0.9844961240310077,
+        "en_precision": 0.9745762711864406,
+        "en_recall": 0.8984375,
+        "en_f1": 0.9349593495934959,
+        "tr_accuracy": 0.9968354430379747,
+        "tr_precision": 1.0,
+        "tr_recall": 0.994059405940594,
+        "tr_f1": 0.997020854021847
+      }
+    },
+    "C_word_char": {
+      "run_id": "a51efb0c03f94951aadca47a92ee2a53",
+      "model_version": "14",
+      "candidate_path": "models/candidates/C_word_char.joblib",
+      "params": {
+        "model": "logreg",
+        "features": "word+char",
+        "C": 10.0,
+        "alpha": 1.0,
+        "max_features": 5000,
+        "ngram_range": [
+          1,
+          2
+        ],
+        "char_max_features": 20000,
+        "char_ngram_range": [
+          3,
+          5
+        ]
+      },
+      "metrics": {
+        "en_accuracy": 0.9835271317829457,
+        "en_precision": 0.9663865546218487,
+        "en_recall": 0.8984375,
+        "en_f1": 0.9311740890688259,
+        "tr_accuracy": 0.9957805907172996,
+        "tr_precision": 0.9980119284294234,
+        "tr_recall": 0.994059405940594,
+        "tr_f1": 0.996031746031746
+      }
+    }
+  },
+  "baseline_rules": {
+    "en_accuracy": 0.8875968992248062,
+    "en_precision": 0.875,
+    "en_recall": 0.109375,
+    "en_f1": 0.19444444444444445,
+    "tr_accuracy": 0.5116033755274262,
+    "tr_precision": 0.9565217391304348,
+    "tr_recall": 0.08712871287128712,
+    "tr_f1": 0.15970961887477314
+  }
+}

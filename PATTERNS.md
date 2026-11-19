@@ -12,6 +12,9 @@
 | Test Double (Dummy) | `scripts/make_dummy_model.py` (`build_dummy_model`) | A tiny model with the same shape as the real one (a Pipeline with a `"tfidf"` step), so CI can build and start the API image without the real model, which exists only in the local DVC cache. |
 | Immutable Artifact | `.github/workflows/cd.yml` (job `deliver`) | Every image is tagged with the commit sha, a tag that never moves, so we always know which code and model are inside and can roll back by tag; `latest` is only a moving pointer. |
 | Idempotent Receiver | `.github/workflows/cd.yml` (job `monitor`) | Running the alert step again does not open a second issue: if an open "Drift alert" issue exists, the new result is added as a comment. |
+| Repeatable Splitting | `src/sms_fraud/data.py` (`leakage_safe_split`) | The split is decided per near-duplicate cluster with a fixed seed, so near-copies always land on the same side (no leakage) and every run gives the same split. |
+| Partitioning | `src/sms_fraud/monitoring.py` (`compare_by_language`) | Each language gets its own reference and current window, and the same `compare()` runs per part, so a change in the language mix can no longer look like drift. |
+| Strategy | `src/sms_fraud/text_stats.py` (`detect_language`) | Language detection is one small pure function; the API and monitoring only call it, so a better detector can replace it in one place. |
 | Data Transfer Object (DTO) | `src/sms_fraud/schemas.py` | Pydantic classes only describe the data going in and out of the API, so the API contract and its validation live in one place. |
 
 **Step 5a (Turkish data, monitoring): no new patterns.** `monitoring.py`, `turkish_data.py` and `text_stats.py` are plain functions that reuse existing code (`validate_data`, `evaluate`, the config Singleton); adding a pattern there would only add complexity.
@@ -21,3 +24,5 @@
 **Step 6a (CI with GitHub Actions):** one new entry above (Test Double in `make_dummy_model.py`). The new smoke test (`tests/test_pipeline_smoke.py`) reuses the config Singleton: it points `PROJECT_ROOT` to a temporary folder, and every stage follows, because all paths come from `project_path()`. No other pattern was added; the CI workflow is configuration, not code.
 
 **Step 6b (DVC remote, CD, scheduled monitoring):** two new entries above, both in `cd.yml` (Immutable Artifact, Idempotent Receiver). No Python code changed: the DVC remote is configuration, and the workflow reuses `monitoring.py` as it is.
+
+**Step 7a (leakage check, clean split, challenge set, per-language monitoring):** three new entries above (Repeatable Splitting, Partitioning, Strategy in `detect_language`). `leakage.py` and `challenge.py` are plain functions that reuse existing code (`split_data`, `evaluate`, `setup_mlflow`, the config Singleton); the challenge set is an evaluation-only hold-out, a practice, not a code pattern.

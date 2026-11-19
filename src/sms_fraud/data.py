@@ -14,9 +14,10 @@ import urllib.request
 import zipfile
 
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, train_test_split
 
 from src.sms_fraud.config import get_config, project_path
+from src.sms_fraud.leakage import cluster_ids
 from src.sms_fraud.logger import get_logger
 
 # We write the name by hand instead of using __name__.
@@ -125,12 +126,19 @@ def split_data(
     df: pd.DataFrame,
     test_size: float | None = None,
     random_state: int | None = None,
+    groups=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Split the data into train and test sets.
 
     stratify=label keeps the spam ratio the same in train and test.
     Why? Spam is a small part of the data (~13%). A pure random split
     could put too few spam messages into the test set.
+
+    groups (Step 7a): one cluster number per row (from leakage.cluster_ids).
+    - None:  plain random split (used up to Step 6; leakage.py still uses
+             it to rebuild the OLD split for comparison).
+    - given: GROUP split. All rows of one cluster go to the same side, so a
+             near-copy of a test message is never in train (no leakage).
 
     If test_size or random_state is not given, we use the config values.
     Tests can pass their own values.
@@ -141,13 +149,42 @@ def split_data(
     if random_state is None:
         random_state = cfg["random_state"]
 
-    train_df, test_df = train_test_split(
-        df,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=df["label"],
+    if groups is None:
+        train_df, test_df = train_test_split(
+            df,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=df["label"],
+        )
+        return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+    # StratifiedGroupKFold cuts the data into n_splits parts ("folds"):
+    # - a group never goes to two folds (no leakage), and
+    # - each fold gets about the same spam share (stratified).
+    # We use the FIRST fold as the test set. test_size 0.2 -> 5 folds, so the
+    # test set is about 1/5 = 20% (not exactly: groups have different sizes).
+    n_splits = round(1 / test_size)
+    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    train_idx, test_idx = next(splitter.split(df, df["label"], groups=groups))
+    return (
+        df.iloc[train_idx].reset_index(drop=True),
+        df.iloc[test_idx].reset_index(drop=True),
     )
-    return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
+
+
+# PATTERN: Repeatable Splitting — the split is decided by cluster (not by single row) with a fixed
+#   seed, so near-copies always land on the same side and every run gives the same split.
+def leakage_safe_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Cluster near-duplicates, then split by cluster. Used for both languages."""
+    threshold = get_config()["leakage"]["similarity_threshold"]
+    groups = cluster_ids(df["message"], threshold)
+    logger.info(
+        "Found %d clusters in %d rows (biggest cluster: %d rows)",
+        len(set(groups)),
+        len(df),
+        pd.Series(groups).value_counts().max(),
+    )
+    return split_data(df, groups=groups)
 
 
 def save_data(train_df: pd.DataFrame, test_df: pd.DataFrame) -> None:
@@ -176,7 +213,13 @@ def main() -> None:
     # Mark the language of every row. Since Step 5b we mix English and
     # Turkish data, and need to know where each row came from.
     clean_df["lang"] = "en"
-    train_df, test_df = split_data(clean_df)
+    # Save ALL clean rows too (like turkish.csv). leakage.py uses them to
+    # rebuild the old random split and compare it with the new one.
+    english_file = project_path(get_config()["data"]["english_file"])
+    english_file.parent.mkdir(parents=True, exist_ok=True)
+    clean_df.to_csv(english_file, index=False, encoding="utf-8")
+    # Step 7a: split by near-duplicate cluster (no leakage), not row by row.
+    train_df, test_df = leakage_safe_split(clean_df)
     save_data(train_df, test_df)
 
     logger.info("----- Summary -----")

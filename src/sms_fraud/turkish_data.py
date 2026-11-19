@@ -6,8 +6,9 @@ Run it with:
 Input:  data/external/TurkishSMSCollection.csv  (tracked with DVC)
 Output (columns: label, message, lang):
     data/processed/turkish.csv        all clean rows
-    data/processed/turkish_train.csv  80% (for training)
-    data/processed/turkish_test.csv   20% (never trained on, for scoring)
+    data/processed/turkish_train.csv  ~80% (for training)
+    data/processed/turkish_test.csv   ~20% (never trained on, for scoring;
+                                      no near-copy of a train message, Step 7a)
 
 Raw file format: separator ";", columns Message;Group;GroupText.
 Group 1 = Spam, Group 2 = Normal.
@@ -16,7 +17,7 @@ Group 1 = Spam, Group 2 = Normal.
 import pandas as pd
 
 from src.sms_fraud.config import get_config, project_path
-from src.sms_fraud.data import spam_percent, split_data, validate_data
+from src.sms_fraud.data import leakage_safe_split, spam_percent, validate_data
 from src.sms_fraud.logger import get_logger
 
 logger = get_logger("sms_fraud.turkish_data")
@@ -76,11 +77,12 @@ def main() -> None:
     clean["lang"] = "tr"
 
     # 80/20 split with the SAME function and settings as the English data:
-    # stratified (same spam share in both parts) and the same random_state
-    # from config.yaml (same split on every run).
-    # validate_data() already removed duplicates, so no message can be in
-    # both train and test (no data leakage).
-    train_df, test_df = split_data(clean)
+    # stratified (same spam share in both parts), the same random_state
+    # from config.yaml (same split on every run), and (Step 7a) split by
+    # near-duplicate CLUSTER. validate_data() removes only EXACT duplicates;
+    # Turkish spam has many near-copies (same campaign, other number/link),
+    # which leaked into the test set before Step 7a (see reports/leakage.md).
+    train_df, test_df = leakage_safe_split(clean)
 
     cfg = get_config()["data"]
     outputs = {"turkish_file": clean, "turkish_train_file": train_df, "turkish_test_file": test_df}

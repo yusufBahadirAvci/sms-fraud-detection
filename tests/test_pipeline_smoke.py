@@ -3,8 +3,8 @@
 A smoke test does not check if the model is good. It checks that every
 stage runs from start to end and writes its output files:
 
-    data -> turkish_data -> combine_data -> eda -> train -> promote
-         -> monitoring (dataset + log mode) -> rollback
+    data -> turkish_data -> leakage -> combine_data -> eda -> train -> promote
+         -> challenge -> monitoring (dataset + log mode) -> rollback
 
 Everything happens in a temporary folder (pytest's tmp_path):
 - no real data, no real model, no internet, no real mlruns/,
@@ -15,6 +15,7 @@ config.PROJECT_ROOT. We point PROJECT_ROOT to the temporary folder.
 """
 
 import json
+import random
 import shutil
 import sys
 
@@ -24,10 +25,12 @@ import pytest
 from mlflow import MlflowClient
 
 from src.sms_fraud import (
+    challenge,
     combine_data,
     config,
     data,
     eda,
+    leakage,
     monitoring,
     promote,
     train,
@@ -36,22 +39,38 @@ from src.sms_fraud import (
 
 N = 15  # messages per class and language: small, but enough for an 80/20 split
 
+# The real repo folder, saved BEFORE the fixture points PROJECT_ROOT to a temp folder.
+REAL_ROOT = config.PROJECT_ROOT
+
+
+def fake_words(seed: int, n: int = 3) -> str:
+    """n made-up words, different for every seed.
+
+    Why? Since Step 7a the split groups near-duplicates. If all fake
+    messages used one template ("WINNER 1", "WINNER 2", ...), they would be
+    ONE cluster, and one cluster cannot be split into train and test.
+    """
+    rng = random.Random(seed)
+    return " ".join("".join(rng.choices("bcdfgklmnprstvz", k=7)) for _ in range(n))
+
 
 def write_fake_raw_files(root) -> None:
     """Create the two raw input files in the same format as the real ones."""
     cfg = config.get_config()["data"]
 
     # English: "label<TAB>message", no header (like SMSSpamCollection).
-    english = [f"spam\tWINNER {i}! Claim your free prize {i} now, call 0800{i}" for i in range(N)]
-    english += [f"ham\tSee you at dinner at {i} pm, bring the book {i}" for i in range(N)]
+    english = [f"spam\tWINNER! Claim your free prize {fake_words(i)}" for i in range(N)]
+    english += [f"ham\tSee you at dinner {fake_words(100 + i)}" for i in range(N)]
     raw_file = root / cfg["raw_dir"] / cfg["raw_file"]
     raw_file.parent.mkdir(parents=True)
     raw_file.write_text("\n".join(english) + "\n", encoding="utf-8")
 
     # Turkish: "Message;Group;GroupText" with a header. Group 1 = spam, 2 = normal.
     turkish = ["Message;Group;GroupText"]
-    turkish += [f"Kampanya {i}: %{i} indirim fırsatı, hemen tıklayın;1;Spam" for i in range(N)]
-    turkish += [f"Akşam {i} gibi eve geliyorum, yemek var mı {i};2;Normal" for i in range(N)]
+    turkish += [
+        f"Kampanya: indirim fırsatı, tıklayın {fake_words(200 + i)};1;Spam" for i in range(N)
+    ]
+    turkish += [f"Akşam eve geliyorum {fake_words(300 + i)};2;Normal" for i in range(N)]
     turkish_file = root / cfg["turkish_raw_file"]
     turkish_file.parent.mkdir(parents=True)
     turkish_file.write_text("\n".join(turkish) + "\n", encoding="utf-8")
@@ -75,6 +94,7 @@ def fake_project(tmp_path_factory):
         # The raw English file exists, so data.main() skips the download.
         data.main()
         turkish_data.main()
+        leakage.main()
         combine_data.main()
         eda.main()
         train.main()
@@ -87,13 +107,26 @@ def fake_project(tmp_path_factory):
         promote.main(["--champion-version", "1"])
         promoted_model = (root / "models/model.joblib").read_bytes()
 
+        # The real hand-written challenge file is small: copy it in.
+        challenge_file = root / config.get_config()["challenge"]["file"]
+        challenge_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REAL_ROOT / config.get_config()["challenge"]["file"], challenge_file)
+        challenge.main()
+
         alerts = monitoring.main([])
 
-        # Log mode needs a prediction log: write 20 fake lines.
+        # Log mode needs a prediction log: write 20 fake lines, half "en",
+        # half "tr" (the "lang" field exists since Step 7a).
         log_file = root / config.get_config()["api"]["predictions_log"]
         log_file.parent.mkdir(parents=True, exist_ok=True)
         rows = [
-            {"message_length": 40 + i, "oov_ratio": 0.1, "probability": 0.1, "prediction": False}
+            {
+                "message_length": 40 + i,
+                "oov_ratio": 0.1,
+                "probability": 0.1,
+                "prediction": False,
+                "lang": "en" if i % 2 else "tr",
+            }
             for i in range(20)
         ]
         log_file.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
@@ -158,10 +191,22 @@ def test_promotion_replaces_english_only_champion(fake_project):
 
 def test_monitoring_writes_reports(fake_project):
     root = fake_project["root"]
-    assert (root / "reports/monitoring/drift_report.md").exists()
-    assert (root / "reports/monitoring/probability_hist.png").exists()
-    assert (root / "reports/live/drift_report.md").exists()
+    report = (root / "reports/monitoring/drift_report.md").read_text(encoding="utf-8")
+    # One section per language (Step 7a).
+    assert "## Language: en" in report and "## Language: tr" in report
+    assert (root / "reports/monitoring/probability_hist_en.png").exists()
+    live = (root / "reports/live/drift_report.md").read_text(encoding="utf-8")
+    assert "## Language: en" in live and "## Language: tr" in live
     assert isinstance(fake_project["alerts"], list)
+
+
+def test_leakage_and_challenge_reports(fake_project):
+    root = fake_project["root"]
+    assert "Near-Duplicate Leakage Report" in (root / "reports/leakage.md").read_text(
+        encoding="utf-8"
+    )
+    scores = json.loads((root / "reports/challenge.json").read_text(encoding="utf-8"))
+    assert {"challenge_precision", "challenge_recall", "challenge_f1"} <= set(scores)
 
 
 def test_rollback_swaps_aliases(fake_project):
