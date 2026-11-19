@@ -83,7 +83,15 @@ def plot_message_length(df: pd.DataFrame) -> None:
         # density=True: show SHARE of messages, not raw counts. Why? There
         # are ~7x more ham messages; with raw counts spam would look tiny.
         # alpha=0.5 makes bars half-transparent so both colors stay visible.
-        ax.hist(lengths, bins=60, range=(0, 400), density=True, alpha=0.5, label=label, color=COLORS[label])
+        ax.hist(
+            lengths,
+            bins=60,
+            range=(0, 400),
+            density=True,
+            alpha=0.5,
+            label=label,
+            color=COLORS[label],
+        )
     ax.set_title("Message length (characters)")
     ax.set_xlabel("Length (messages longer than 400 are not shown)")
     ax.set_ylabel("Share of messages")
@@ -126,7 +134,7 @@ def write_summary(df: pd.DataFrame, spam_words: pd.Series) -> None:
     # stays correct if the data changes.
     observations = [
         f"The data is imbalanced: only {spam_share:.1%} of messages are spam. "
-        f"A model that always says \"ham\" would already get {1 - spam_share:.1%} accuracy, "
+        f'A model that always says "ham" would already get {1 - spam_share:.1%} accuracy, '
         f"so we must look at precision, recall and F1, not only accuracy.",
         f"Spam messages are much longer: {avg_len['spam']:.0f} characters on average "
         f"vs {avg_len['ham']:.0f} for ham. Length alone is already a useful signal.",
@@ -156,7 +164,10 @@ def write_summary(df: pd.DataFrame, spam_words: pd.Series) -> None:
         "",
         "| # | Word | Count |",
         "|---|---|---|",
-        *[f"| {i} | {word} | {count} |" for i, (word, count) in enumerate(spam_words.head(10).items(), start=1)],
+        *[
+            f"| {i} | {word} | {count} |"
+            for i, (word, count) in enumerate(spam_words.head(10).items(), start=1)
+        ],
         "",
         "## Observations",
         "",

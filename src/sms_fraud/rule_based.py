@@ -14,12 +14,12 @@ Without a baseline, we cannot answer that question.
 # We use Turkish AND English, because users can get SMS in both languages.
 SUSPICIOUS_KEYWORDS = [
     # Turkish
-    "kazandınız",        # "you won" - fake prize messages
-    "tıklayın",          # "click" - tries to make you open a bad link
-    "hesabınız bloke",   # "your account is blocked" - creates fear
-    "ödül",              # "prize"
-    "acil",              # "urgent" - pushes you to act fast
-    "şifrenizi",         # "your password" - tries to steal passwords
+    "kazandınız",  # "you won" - fake prize messages
+    "tıklayın",  # "click" - tries to make you open a bad link
+    "hesabınız bloke",  # "your account is blocked" - creates fear
+    "ödül",  # "prize"
+    "acil",  # "urgent" - pushes you to act fast
+    "şifrenizi",  # "your password" - tries to steal passwords
     # English
     "winner",
     "click here",

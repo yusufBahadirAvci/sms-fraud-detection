@@ -30,7 +30,7 @@ import argparse
 import json
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import joblib
 import mlflow
@@ -50,7 +50,9 @@ CHAMPION = "champion"
 PREVIOUS = "previous"
 
 # The rows of the comparison table, in this order.
-METRICS = [f"{lang}_{m}" for lang in ("en", "tr") for m in ("accuracy", "precision", "recall", "f1")]
+METRICS = [
+    f"{lang}_{m}" for lang in ("en", "tr") for m in ("accuracy", "precision", "recall", "f1")
+]
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +65,8 @@ def pick_challenger(runs: dict) -> str:
     return max(runs, key=lambda name: runs[name]["metrics"]["tr_f1"])
 
 
-# PATTERN: Strategy — the promotion rule is one small function with its limit passed in, so we can test it with fake numbers and change the rule without touching the MLflow and file code.
+# PATTERN: Strategy — the promotion rule is one small function with its limit passed in, so we can
+#   test it with fake numbers and change the rule without touching the MLflow and file code.
 def decide(champion: dict, challenger: dict, max_en_f1_drop: float) -> tuple[bool, list[str]]:
     """Should the challenger replace the champion?
 
@@ -84,7 +87,8 @@ def decide(champion: dict, challenger: dict, max_en_f1_drop: float) -> tuple[boo
     en_ok = round(en_drop, 10) <= max_en_f1_drop
     reasons.append(
         f"English F1: {challenger['en_f1']:.4f} vs {champion['en_f1']:.4f} "
-        f"(drop {en_drop:+.4f}, limit {max_en_f1_drop}) -> " + ("OK" if en_ok else "too big a drop (FAIL)")
+        f"(drop {en_drop:+.4f}, limit {max_en_f1_drop}) -> "
+        + ("OK" if en_ok else "too big a drop (FAIL)")
     )
     return tr_better and en_ok, reasons
 
@@ -102,7 +106,9 @@ def alias_version(client: MlflowClient, model_name: str, alias: str) -> str | No
         return None
 
 
-def move_aliases(client: MlflowClient, model_name: str, new_champion: str, new_previous: str | None) -> None:
+def move_aliases(
+    client: MlflowClient, model_name: str, new_champion: str, new_previous: str | None
+) -> None:
     """Point "champion" to one version and "previous" to another."""
     if new_previous is not None:
         client.set_registered_model_alias(model_name, PREVIOUS, new_previous)
@@ -120,8 +126,14 @@ def replace_file(write, target) -> None:
     os.replace(tmp, target)
 
 
-def promote(client: MlflowClient, model_name: str, candidate_path, model_path,
-            new_version: str, old_version: str) -> None:
+def promote(
+    client: MlflowClient,
+    model_name: str,
+    candidate_path,
+    model_path,
+    new_version: str,
+    old_version: str,
+) -> None:
     """Make the challenger the new champion (file + aliases)."""
     replace_file(lambda tmp: shutil.copyfile(candidate_path, tmp), model_path)
     move_aliases(client, model_name, new_champion=new_version, new_previous=old_version)
@@ -136,7 +148,9 @@ def rollback(client: MlflowClient, model_name: str, model_path) -> tuple[str, st
     """
     previous = alias_version(client, model_name, PREVIOUS)
     if previous is None:
-        raise RuntimeError(f"No '{PREVIOUS}' alias in model {model_name!r}: nothing to roll back to.")
+        raise RuntimeError(
+            f"No '{PREVIOUS}' alias in model {model_name!r}: nothing to roll back to."
+        )
     current = alias_version(client, model_name, CHAMPION)
 
     # Load the old model from MLflow and write it as the production file.
@@ -156,8 +170,15 @@ def rollback(client: MlflowClient, model_name: str, model_path) -> tuple[str, st
 # ---------------------------------------------------------------------------
 
 
-def write_report(path, columns: dict, champion_name: str, challenger_name: str,
-                 promoted: bool, reasons: list[str], max_en_f1_drop: float) -> None:
+def write_report(
+    path,
+    columns: dict,
+    champion_name: str,
+    challenger_name: str,
+    promoted: bool,
+    reasons: list[str],
+    max_en_f1_drop: float,
+) -> None:
     """Write promotion.md: decision, reasons and the comparison table.
 
     columns: {column title: metrics dict}, e.g. {"champion (v11)": {...}, "A_word (v12)": {...}}
@@ -167,7 +188,7 @@ def write_report(path, columns: dict, champion_name: str, challenger_name: str,
     lines = [
         "# Model Promotion Report",
         "",
-        f"- Created: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"- Created: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         f"- Champion: {champion_name}",
         f"- Challenger (best tr_f1): {challenger_name}",
         f"- Decision: **{'PROMOTED' if promoted else 'REJECTED'}**",
@@ -187,7 +208,8 @@ def write_report(path, columns: dict, champion_name: str, challenger_name: str,
         "|---|" + "---|" * len(titles),
         *[f"| {m} | " + " | ".join(f"{columns[t][m]:.4f}" for t in titles) + " |" for m in METRICS],
         "",
-        "Rollback: `python -m src.sms_fraud.promote rollback` (then `dvc add models/model.joblib`).",
+        "Rollback: `python -m src.sms_fraud.promote rollback` "
+        "(then `dvc add models/model.joblib`).",
         "",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -228,8 +250,14 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
         logger.info(reason)
 
     if promoted:
-        promote(client, model_name, project_path(challenger["candidate_path"]), model_path,
-                new_version=challenger["model_version"], old_version=champion_version)
+        promote(
+            client,
+            model_name,
+            project_path(challenger["candidate_path"]),
+            model_path,
+            new_version=challenger["model_version"],
+            old_version=champion_version,
+        )
         logger.info("Now run: dvc add models/model.joblib")
     else:
         # Make sure the alias exists even after a rejection (first run).
@@ -242,10 +270,13 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
         mark = " ← challenger" if name == challenger_name else ""
         columns[f"{name} (v{run['model_version']}){mark}"] = run["metrics"]
     write_report(
-        project_path(cfg["promotion"]["report_path"]), columns,
+        project_path(cfg["promotion"]["report_path"]),
+        columns,
         champion_name=f"version {champion_version} (models/model.joblib before this run)",
         challenger_name=f"{challenger_name} (version {challenger['model_version']})",
-        promoted=promoted, reasons=reasons, max_en_f1_drop=max_drop,
+        promoted=promoted,
+        reasons=reasons,
+        max_en_f1_drop=max_drop,
     )
     return promoted
 
@@ -253,8 +284,11 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Champion/challenger promotion and rollback.")
     parser.add_argument("action", nargs="?", choices=["promote", "rollback"], default="promote")
-    parser.add_argument("--champion-version", default=None,
-                        help="Registered version of the current model (only needed the first time).")
+    parser.add_argument(
+        "--champion-version",
+        default=None,
+        help="Registered version of the current model (only needed the first time).",
+    )
     return parser.parse_args(argv)
 
 
@@ -265,13 +299,16 @@ def main(argv=None) -> None:
     client = MlflowClient()
 
     if args.action == "rollback":
-        restored, demoted = rollback(client, cfg["mlflow"]["registered_model_name"],
-                                     project_path(cfg["model"]["model_path"]))
+        restored, demoted = rollback(
+            client, cfg["mlflow"]["registered_model_name"], project_path(cfg["model"]["model_path"])
+        )
         # Add a short note to the report, so the history is visible.
         report = project_path(cfg["promotion"]["report_path"])
         with open(report, "a", encoding="utf-8") as f:
-            f.write(f"\n## Rollback ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')})\n\n"
-                    f"Champion is version {restored} again; version {demoted} is now 'previous'.\n")
+            f.write(
+                f"\n## Rollback ({datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')})\n\n"
+                f"Champion is version {restored} again; version {demoted} is now 'previous'.\n"
+            )
         logger.info("Now run: dvc add models/model.joblib (and restart the API)")
     else:
         run_promotion(client, cfg, args.champion_version)

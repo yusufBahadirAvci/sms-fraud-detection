@@ -23,7 +23,7 @@ Outputs (in reports/monitoring/ or the --out-dir folder):
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -130,16 +130,28 @@ def compare(
             status = "—"
         else:
             status = "ALERT" if crossed else "OK"
-        rows.append({"metric": metric, "reference": reference, "current": current, "threshold": threshold, "status": status})
+        rows.append(
+            {
+                "metric": metric,
+                "reference": reference,
+                "current": current,
+                "threshold": threshold,
+                "status": status,
+            }
+        )
         if crossed:
             alerts.append(reason)
 
     # a) OOV ratio: how many words are unknown to the model?
     cur_oov = cur["oov_ratio"].mean()
     add(
-        "OOV ratio (mean)", ref["oov_ratio"].mean(), cur_oov,
-        f"> {thresholds['oov_ratio']}", cur_oov > thresholds["oov_ratio"],
-        f"OOV ratio {cur_oov:.2f} > {thresholds['oov_ratio']} - most words are unknown to the model",
+        "OOV ratio (mean)",
+        ref["oov_ratio"].mean(),
+        cur_oov,
+        f"> {thresholds['oov_ratio']}",
+        cur_oov > thresholds["oov_ratio"],
+        f"OOV ratio {cur_oov:.2f} > {thresholds['oov_ratio']}"
+        " - most words are unknown to the model",
     )
 
     # b) Message length. ks_2samp compares the WHOLE shape of two
@@ -148,8 +160,11 @@ def compare(
     add("Message length (mean chars)", ref["length"].mean(), cur["length"].mean())
     ks = ks_2samp(ref["length"], cur["length"])
     add(
-        f"Length KS test p-value (D={ks.statistic:.3f})", "—", ks.pvalue,
-        f"< {thresholds['ks_pvalue']}", ks.pvalue < thresholds["ks_pvalue"],
+        f"Length KS test p-value (D={ks.statistic:.3f})",
+        "—",
+        ks.pvalue,
+        f"< {thresholds['ks_pvalue']}",
+        ks.pvalue < thresholds["ks_pvalue"],
         f"Length distribution changed (KS p-value {ks.pvalue:.2g} < {thresholds['ks_pvalue']})",
     )
 
@@ -158,8 +173,11 @@ def compare(
     add("Mean spam probability", ref["probability"].mean(), cur["probability"].mean())
     psi_value = psi(ref["probability"], cur["probability"], bins=psi_bins)
     add(
-        "PSI of spam probability", "—", psi_value,
-        f"> {thresholds['psi']}", psi_value > thresholds["psi"],
+        "PSI of spam probability",
+        "—",
+        psi_value,
+        f"> {thresholds['psi']}",
+        psi_value > thresholds["psi"],
         f"Prediction distribution shifted (PSI {psi_value:.2f} > {thresholds['psi']})",
     )
 
@@ -169,8 +187,11 @@ def compare(
             add(name.capitalize(), ref_metrics[name], cur_metrics[name])
         f1_drop = ref_metrics["f1"] - cur_metrics["f1"]
         add(
-            f"F1 (drop = {f1_drop:.3f})", ref_metrics["f1"], cur_metrics["f1"],
-            f"drop > {thresholds['f1_drop']}", f1_drop > thresholds["f1_drop"],
+            f"F1 (drop = {f1_drop:.3f})",
+            ref_metrics["f1"],
+            cur_metrics["f1"],
+            f"drop > {thresholds['f1_drop']}",
+            f1_drop > thresholds["f1_drop"],
             f"F1 dropped by {f1_drop:.2f} ({ref_metrics['f1']:.2f} -> {cur_metrics['f1']:.2f})",
         )
     else:
@@ -192,13 +213,21 @@ def fmt(value) -> str:
     return str(value)
 
 
-def write_report(rows, alerts, out_dir: Path, ref_name: str, current_name: str, n_ref: int, n_cur: int,
-                 model_name: str = "") -> Path:
+def write_report(
+    rows,
+    alerts,
+    out_dir: Path,
+    ref_name: str,
+    current_name: str,
+    n_ref: int,
+    n_cur: int,
+    model_name: str = "",
+) -> Path:
     """Write drift_report.md: one table + list of alerts."""
     lines = [
         "# Drift Report",
         "",
-        f"- Created: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"- Created: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
         f"- Model: {model_name}",
         f"- Reference: {ref_name} ({n_ref} messages)",
         f"- Current: {current_name} ({n_cur} messages)",
@@ -207,7 +236,8 @@ def write_report(rows, alerts, out_dir: Path, ref_name: str, current_name: str, 
         "| Metric | Reference | Current | Threshold | Status |",
         "|---|---|---|---|---|",
         *[
-            f"| {r['metric']} | {fmt(r['reference'])} | {fmt(r['current'])} | {r['threshold']} | {r['status']} |"
+            f"| {r['metric']} | {fmt(r['reference'])} | {fmt(r['current'])} "
+            f"| {r['threshold']} | {r['status']} |"
             for r in rows
         ],
         "",
@@ -238,7 +268,7 @@ def write_alert(alerts: list[str], out_dir: Path, current_name: str) -> Path | N
         path.unlink(missing_ok=True)
         return None
     payload = {
-        "created": datetime.now(timezone.utc).isoformat(),
+        "created": datetime.now(UTC).isoformat(),
         "current_window": current_name,
         "alerts": alerts,
     }
@@ -250,14 +280,29 @@ def plot_histograms(ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current
     """Two charts: spam probability and message length, reference vs current."""
     charts = [
         ("probability", np.linspace(0, 1, 21), "Spam probability", "probability_hist.png"),
-        ("length", np.linspace(0, 400, 41), "Message length (chars, max 400 shown)", "length_hist.png"),
+        (
+            "length",
+            np.linspace(0, 400, 41),
+            "Message length (chars, max 400 shown)",
+            "length_hist.png",
+        ),
     ]
     for column, bins, xlabel, filename in charts:
         fig, ax = plt.subplots(figsize=(7, 4))
-        for df, label, color in ((ref, "reference: combined test", "tab:blue"), (cur, f"current: {current_name}", "tab:orange")):
+        for df, label, color in (
+            (ref, "reference: combined test", "tab:blue"),
+            (cur, f"current: {current_name}", "tab:orange"),
+        ):
             # weights = 1/n turns counts into SHARES, so windows of different
             # sizes can be compared. alpha=0.5 keeps both colors visible.
-            ax.hist(df[column], bins=bins, weights=np.ones(len(df)) / len(df), alpha=0.5, label=label, color=color)
+            ax.hist(
+                df[column],
+                bins=bins,
+                weights=np.ones(len(df)) / len(df),
+                alpha=0.5,
+                label=label,
+                color=color,
+            )
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Share of messages")
         ax.set_title(f"{xlabel}: reference vs current")
@@ -275,7 +320,9 @@ def plot_histograms(ref: pd.DataFrame, cur: pd.DataFrame, out_dir: Path, current
 def load_log_window(path: Path, skip: int, take: int | None) -> pd.DataFrame:
     """Read predictions.jsonl and return the chosen lines as a window."""
     if not path.exists():
-        raise FileNotFoundError(f"No prediction log at {path}. Send some requests to the API first.")
+        raise FileNotFoundError(
+            f"No prediction log at {path}. Send some requests to the API first."
+        )
     # lines=True: one JSON object per line (JSONL).
     log = pd.read_json(path, lines=True)
     end = None if take is None else skip + take
@@ -287,13 +334,24 @@ def load_log_window(path: Path, skip: int, take: int | None) -> pd.DataFrame:
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check the model for data and prediction drift.")
-    parser.add_argument("--mode", choices=["dataset", "log"], default="dataset",
-                        help="dataset: Turkish data file; log: live API log.")
+    parser.add_argument(
+        "--mode",
+        choices=["dataset", "log"],
+        default="dataset",
+        help="dataset: Turkish data file; log: live API log.",
+    )
     parser.add_argument("--skip", type=int, default=0, help="log mode: skip the first N log lines.")
-    parser.add_argument("--take", type=int, default=None, help="log mode: use only N lines after --skip.")
-    parser.add_argument("--out-dir", default=None, help="Folder for the outputs (default from config).")
-    parser.add_argument("--model-path", default=None,
-                        help="Model file to check (default: the champion, models/model.joblib).")
+    parser.add_argument(
+        "--take", type=int, default=None, help="log mode: use only N lines after --skip."
+    )
+    parser.add_argument(
+        "--out-dir", default=None, help="Folder for the outputs (default from config)."
+    )
+    parser.add_argument(
+        "--model-path",
+        default=None,
+        help="Model file to check (default: the champion, models/model.joblib).",
+    )
     return parser.parse_args(argv)
 
 
@@ -303,7 +361,9 @@ def main(argv=None) -> list[str]:
     mon_cfg = cfg["monitoring"]
     threshold = cfg["api"]["threshold"]
 
-    model_path = Path(args.model_path) if args.model_path else project_path(cfg["model"]["model_path"])
+    model_path = (
+        Path(args.model_path) if args.model_path else project_path(cfg["model"]["model_path"])
+    )
     model = joblib.load(model_path)
 
     # REFERENCE window: English test + Turkish test, with true labels.
@@ -330,9 +390,13 @@ def main(argv=None) -> list[str]:
     out_dir = project_path(args.out_dir or default_out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    rows, alerts = compare(ref, cur, mon_cfg["thresholds"], mon_cfg["psi_bins"], ref_metrics, cur_metrics)
+    rows, alerts = compare(
+        ref, cur, mon_cfg["thresholds"], mon_cfg["psi_bins"], ref_metrics, cur_metrics
+    )
 
-    report = write_report(rows, alerts, out_dir, ref_name, current_name, len(ref), len(cur), model_path.name)
+    report = write_report(
+        rows, alerts, out_dir, ref_name, current_name, len(ref), len(cur), model_path.name
+    )
     plot_histograms(ref, cur, out_dir, current_name)
     alert_file = write_alert(alerts, out_dir, current_name)
 

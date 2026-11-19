@@ -29,3 +29,7 @@ logs/
 build/
 dist/
 *.egg-info/
+
+# Coverage output (pytest-cov), created on every test run.
+.coverage
+coverage.xml

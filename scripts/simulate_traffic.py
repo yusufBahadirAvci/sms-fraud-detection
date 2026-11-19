@@ -35,7 +35,7 @@ def send(messages: list[str], name: str) -> None:
     """Send the messages in batches and print a short summary."""
     flagged = 0
     for start in range(0, len(messages), BATCH_SIZE):
-        batch = messages[start:start + BATCH_SIZE]
+        batch = messages[start : start + BATCH_SIZE]
         response = requests.post(f"{API_URL}/predict/batch", json={"messages": batch}, timeout=30)
         response.raise_for_status()
         flagged += sum(r["is_fraud"] for r in response.json()["results"])

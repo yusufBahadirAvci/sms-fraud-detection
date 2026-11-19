@@ -166,7 +166,8 @@ def spam_percent(df: pd.DataFrame) -> float:
     return (df["label"] == "spam").mean() * 100
 
 
-# PATTERN: Pipeline — the data goes through fixed steps in order (download, load, validate, split, save); each step's output is the next step's input.
+# PATTERN: Pipeline — the data goes through fixed steps in order (download, load, validate, split,
+#   save); each step's output is the next step's input.
 def main() -> None:
     """Run all steps in order and log a short summary."""
     download_data()

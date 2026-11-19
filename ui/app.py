@@ -21,7 +21,9 @@ st.set_page_config(page_title="SMS Fraud Checker", page_icon="📱")
 st.title("📱 SMS Fraud Checker")
 st.caption(f"Model API: {API_URL}")
 
-message = st.text_area("Paste an SMS message:", height=150, placeholder="e.g. You won a free prize! Call now...")
+message = st.text_area(
+    "Paste an SMS message:", height=150, placeholder="e.g. You won a free prize! Call now..."
+)
 
 if st.button("Check", type="primary"):
     # Check empty input here too, so the user gets a fast, friendly message.
@@ -43,9 +45,13 @@ if st.button("Check", type="primary"):
             probability = result["probability"]
             if result["is_fraud"]:
                 # st.error shows a red box, st.success a green box.
-                st.error(f"🚨 FRAUD — this message looks like spam ({probability:.1%} spam probability).")
+                st.error(
+                    f"🚨 FRAUD — this message looks like spam ({probability:.1%} spam probability)."
+                )
             else:
-                st.success(f"✅ NORMAL — this message looks safe ({probability:.1%} spam probability).")
+                st.success(
+                    f"✅ NORMAL — this message looks safe ({probability:.1%} spam probability)."
+                )
 
             # A bar from 0% to 100% makes the probability easy to see.
             st.progress(probability, text=f"Spam probability: {probability:.1%}")

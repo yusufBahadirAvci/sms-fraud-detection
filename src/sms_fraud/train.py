@@ -27,7 +27,6 @@ import matplotlib
 # This line must come BEFORE "import matplotlib.pyplot".
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-
 import mlflow  # noqa: E402
 import mlflow.sklearn  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -89,7 +88,8 @@ def load_test_sets() -> dict[str, tuple[pd.Series, pd.Series]]:
 # ---------------------------------------------------------------------------
 
 
-# PATTERN: Factory — one function decides WHICH classifier to create from a name ("logreg" or "nb"), so main() and the tests never need to know the details of each model.
+# PATTERN: Factory — one function decides WHICH classifier to create from a name ("logreg" or "nb"),
+#   so main() and the tests never need to know the details of each model.
 def build_classifier(model_name: str, C: float = 1.0, alpha: float = 1.0):
     """Create a new, untrained classifier from its name."""
     if model_name == "logreg":
@@ -104,7 +104,8 @@ def build_classifier(model_name: str, C: float = 1.0, alpha: float = 1.0):
     raise ValueError(f"Unknown model: {model_name!r}. Use one of {MODEL_NAMES}.")
 
 
-# PATTERN: Factory — one function creates the text-to-numbers step from a name ("word", "char", "word+char"), so a new experiment is one line in config.yaml, not new code.
+# PATTERN: Factory — one function creates the text-to-numbers step from a name ("word", "char",
+#   "word+char"), so a new experiment is one line in config.yaml, not new code.
 def build_features(
     features: str,
     max_features: int,
@@ -154,13 +155,19 @@ def build_pipeline(
     char_ngram_range: tuple[int, int] = (3, 5),
 ) -> Pipeline:
     """Create the full model: text -> TF-IDF numbers -> classifier."""
-    # PATTERN: Pipeline — the text step (TF-IDF) and the classifier are joined into one object, so training and prediction always use the same steps in the same order.
+    # PATTERN: Pipeline — the text step (TF-IDF) and the classifier are joined into one object, so
+    #   training and prediction always use the same steps in the same order.
     return Pipeline(
         [
             # Step 1: turn each message into numbers. The step keeps the name
             # "tfidf" for every feature kind, so the API and monitoring code
             # always find it in the same place.
-            ("tfidf", build_features(features, max_features, ngram_range, char_max_features, char_ngram_range)),
+            (
+                "tfidf",
+                build_features(
+                    features, max_features, ngram_range, char_max_features, char_ngram_range
+                ),
+            ),
             # Step 2: the classifier, chosen by the factory above.
             ("clf", build_classifier(model_name, C=C, alpha=alpha)),
         ]
@@ -306,7 +313,10 @@ def run_experiment(experiment: dict, X_train, y_train, test_sets: dict, cfg: dic
 
     logger.info(
         "%-12s en_f1=%.4f tr_f1=%.4f (registered version %s)",
-        run_name, scores["en_f1"], scores["tr_f1"], info.registered_model_version,
+        run_name,
+        scores["en_f1"],
+        scores["tr_f1"],
+        info.registered_model_version,
     )
     return {
         "run_id": run.info.run_id,
@@ -320,7 +330,9 @@ def run_experiment(experiment: dict, X_train, y_train, test_sets: dict, cfg: dic
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the SMS fraud candidate models.")
-    parser.add_argument("--only", default=None, help="Run only the experiment with this name (e.g. B_char).")
+    parser.add_argument(
+        "--only", default=None, help="Run only the experiment with this name (e.g. B_char)."
+    )
     return parser.parse_args()
 
 
@@ -337,7 +349,9 @@ def main() -> None:
     test_sets = load_test_sets()
     logger.info(
         "Train rows: %d (combined) | en test: %d | tr test: %d",
-        len(X_train), len(test_sets["en"][0]), len(test_sets["tr"][0]),
+        len(X_train),
+        len(test_sets["en"][0]),
+        len(test_sets["tr"][0]),
     )
 
     setup_mlflow(cfg["mlflow"])

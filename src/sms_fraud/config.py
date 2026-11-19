@@ -12,7 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 
-# PATTERN: Singleton — the YAML file is read only once; every later call returns the same dict object, so all modules share one config.
+# PATTERN: Singleton — the YAML file is read only once; every later call returns the same dict
+#   object, so all modules share one config.
 # lru_cache remembers the result of the first call. Later calls do not
 # open the file again; they get the saved result.
 @lru_cache(maxsize=1)

@@ -9,7 +9,7 @@ import hashlib
 import json
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import joblib
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -122,7 +122,8 @@ app = FastAPI(
 )
 
 
-# PATTERN: Dependency Injection — endpoints do not find or load the model themselves; FastAPI "injects" it with Depends(get_model_service), so tests can replace it with a fake model.
+# PATTERN: Dependency Injection — endpoints do not find or load the model themselves; FastAPI
+#   "injects" it with Depends(get_model_service), so tests can replace it with a fake model.
 def get_model_service(request: Request) -> ModelService:
     """Give the loaded model to an endpoint, or answer 503 if there is none."""
     service = getattr(request.app.state, "model_service", None)
@@ -141,7 +142,7 @@ def log_predictions(messages: list[str], results: list[PredictResponse], oov: li
     JSONL = one JSON object per line: easy to append and easy to read later.
     """
     PREDICTIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     lines = [
         json.dumps(
             {
@@ -154,7 +155,9 @@ def log_predictions(messages: list[str], results: list[PredictResponse], oov: li
                 "model_version": result.model_version,
             }
         )
-        for message, result, ratio in zip(messages, results, oov)
+        # strict=True: the 3 lists must have the same length. They always do;
+        # if a future bug breaks that, we get an error instead of lost log lines.
+        for message, result, ratio in zip(messages, results, oov, strict=True)
     ]
     with _log_lock:
         with open(PREDICTIONS_LOG, "a", encoding="utf-8") as f:
@@ -172,7 +175,9 @@ def health(request: Request) -> HealthResponse:
 
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(body: PredictRequest, service: ModelService = Depends(get_model_service)) -> PredictResponse:
+def predict(
+    body: PredictRequest, service: ModelService = Depends(get_model_service)
+) -> PredictResponse:
     """Classify one SMS message."""
     result = service.predict([body.message])[0]
     log_predictions([body.message], [result], service.oov_ratios([body.message]))

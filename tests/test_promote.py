@@ -14,13 +14,22 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-from src.sms_fraud.promote import CHAMPION, PREVIOUS, alias_version, decide, pick_challenger, promote, rollback
+from src.sms_fraud.promote import (
+    CHAMPION,
+    PREVIOUS,
+    alias_version,
+    decide,
+    pick_challenger,
+    promote,
+    rollback,
+)
 
 MAX_DROP = 0.02
 CHAMPION_METRICS = {"en_f1": 0.94, "tr_f1": 0.36}
 
 
 # ----- The rules (fake metrics) -----
+
 
 def test_promote_when_turkish_better_and_english_ok():
     ok, reasons = decide(CHAMPION_METRICS, {"en_f1": 0.93, "tr_f1": 0.95}, MAX_DROP)
@@ -58,10 +67,13 @@ def test_challenger_is_the_run_with_best_turkish_f1():
 
 # ----- The registry: promote + rollback (temporary MLflow) -----
 
+
 def tiny_model(spam_word: str) -> Pipeline:
     """A tiny model that calls messages with `spam_word` spam."""
     messages = [f"{spam_word} now", f"get {spam_word}", "see you soon", "call me later"]
-    return Pipeline([("tfidf", TfidfVectorizer()), ("clf", LogisticRegression())]).fit(messages, [1, 1, 0, 0])
+    return Pipeline([("tfidf", TfidfVectorizer()), ("clf", LogisticRegression())]).fit(
+        messages, [1, 1, 0, 0]
+    )
 
 
 @pytest.fixture
@@ -73,7 +85,9 @@ def registry(tmp_path):
     exp_id = mlflow.create_experiment("test", artifact_location=(tmp_path / "artifacts").as_uri())
     for word in ("prize", "bedava"):  # version 1, version 2
         with mlflow.start_run(experiment_id=exp_id):
-            mlflow.sklearn.log_model(tiny_model(word), name="model", registered_model_name="test-model")
+            mlflow.sklearn.log_model(
+                tiny_model(word), name="model", registered_model_name="test-model"
+            )
     yield MlflowClient()
     # Put the global MLflow setting back for the other tests.
     mlflow.set_tracking_uri(old_uri)

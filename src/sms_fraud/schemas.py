@@ -16,7 +16,8 @@ MAX_MESSAGE_LENGTH = 5000
 MAX_BATCH_SIZE = 100
 
 
-# PATTERN: Data Transfer Object (DTO) — these classes only describe the data that goes in and out of the API, with no business logic, so the API "contract" is in one clear place.
+# PATTERN: Data Transfer Object (DTO) — these classes only describe the data that goes in and out of
+#   the API, with no business logic, so the API "contract" is in one clear place.
 class PredictRequest(BaseModel):
     """Input for POST /predict."""
 

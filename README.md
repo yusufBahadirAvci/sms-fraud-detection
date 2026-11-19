@@ -1,5 +1,7 @@
 # SMS Fraud Detection
 
+[![CI](https://github.com/yusufBahadirAvci/sms-fraud-detection/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yusufBahadirAvci/sms-fraud-detection/actions/workflows/ci.yml)
+
 ## Goal
 Detect fraud (spam) SMS messages. The project has:
 - a rule-based baseline (`src/sms_fraud/rule_based.py`),
@@ -11,7 +13,8 @@ Detect fraud (spam) SMS messages. The project has:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt       # runtime only
+pip install -r requirements-dev.txt   # + pytest, pytest-cov, ruff, httpx (for development)
 ```
 
 ## Build data and model (DVC pipeline)
@@ -71,7 +74,15 @@ Thresholds are in `config/config.yaml` (`monitoring:`).
 
 The raw Turkish file is tracked with DVC (`data/external/TurkishSMSCollection.csv.dvc`), not Git.
 
-## Test
+## Test and lint
 ```powershell
-pytest -v
+ruff check .                  # lint (rules in pyproject.toml)
+ruff format .                 # format the code
+pytest -v --cov=src           # tests + coverage (no real data or model needed)
 ```
+
+## Continuous Integration
+`.github/workflows/ci.yml` runs on every push and pull request to `main`:
+- **test**: `ruff check`, `ruff format --check`, `pytest` with coverage (must be at least 70%); `coverage.xml` is uploaded as an artifact.
+- **docker**: builds the UI image, builds the API image with a dummy model
+  (`scripts/make_dummy_model.py`, CI only), starts it, waits for the HEALTHCHECK and calls `/health` and `/predict`.

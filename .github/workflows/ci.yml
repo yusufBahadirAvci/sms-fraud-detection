@@ -1,0 +1,145 @@
+# Continuous Integration (CI): GitHub runs these checks on every push and
+# every pull request to main. If one step fails, the run is red and we see
+# the problem BEFORE it reaches users.
+#
+# 2 jobs:
+#   test   -> lint (ruff), format check, tests with coverage
+#   docker -> build both images, start the API, call /health and /predict
+#
+# No real data or real model is needed: the tests use tiny fake data, and
+# the docker job builds the API with a dummy model (scripts/make_dummy_model.py).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# If we push again while an older run on the same branch is still running,
+# cancel the old run. Its result would be out of date anyway, and this
+# saves CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the jobs only need to READ the code.
+permissions:
+  contents: read
+
+env:
+  # MLflow prints a long hint on every import; we do not need it in logs.
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Stop a stuck run instead of waiting for the 6-hour default.
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          # Save downloaded pip packages between runs. The cache key comes
+          # from these files: if they change, the cache is rebuilt.
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        # requirements-dev.txt also includes requirements.txt (-r line).
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff check)
+        run: ruff check .
+
+      - name: Format check (ruff format)
+        # --check only reports; it does not change files in CI.
+        run: ruff format --check .
+
+      - name: Tests with coverage
+        # --cov-fail-under=70: the job fails if tests run less than 70% of
+        # the code lines in src/. coverage.xml is the report file.
+        run: pytest -v --cov=src --cov-report=term --cov-report=xml --cov-fail-under=70
+
+      - name: Upload coverage report
+        # always(): upload even if the tests failed, so we can look at it.
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  docker:
+    # Only build images if lint and tests passed.
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-api.txt
+
+      - name: Create a dummy model (CI only)
+        # The real model is only in the local DVC cache. The dummy model has
+        # the same shape, so the API image can be built and started.
+        # requirements-api.txt pins the SAME scikit-learn as the image.
+        run: |
+          pip install -r requirements-api.txt
+          python scripts/make_dummy_model.py
+
+      - name: Build the UI image
+        run: docker build -f Dockerfile.ui -t sms-fraud-ui:ci .
+
+      - name: Build the API image
+        run: docker build -f Dockerfile.api -t sms-fraud-api:ci .
+
+      - name: Start the API container
+        run: docker run -d --name api -p 8000:8000 sms-fraud-api:ci
+
+      - name: Wait for the HEALTHCHECK to say "healthy"
+        # Docker runs the HEALTHCHECK from Dockerfile.api every 30 s. We ask
+        # Docker for the status every 3 s, for at most 120 s.
+        run: |
+          for i in $(seq 1 40); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' api)
+            echo "health status: $status"
+            if [ "$status" = "healthy" ]; then exit 0; fi
+            if [ "$status" = "unhealthy" ]; then exit 1; fi
+            sleep 3
+          done
+          echo "API did not become healthy in time"
+          exit 1
+
+      - name: Call /health and /predict
+        # curl -f: fail on HTTP errors (4xx/5xx). jq -e: fail if the check is false.
+        run: |
+          curl -fsS http://localhost:8000/health | tee health.json
+          echo
+          jq -e '.model_loaded == true' health.json
+          curl -fsS -X POST http://localhost:8000/predict \
+            -H "Content-Type: application/json" \
+            -d '{"message": "WINNER! Click here to claim your prize"}' | tee predict.json
+          echo
+          jq -e '(.probability >= 0) and (.probability <= 1) and (.is_fraud | type == "boolean")' predict.json
+
+      - name: Show API logs (only if something failed)
+        if: failure()
+        run: docker logs api
+
+      - name: Stop the API container
+        if: always()
+        run: docker rm -f api

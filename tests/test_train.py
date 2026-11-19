@@ -71,18 +71,28 @@ def test_factory_rejects_unknown_model():
 
 # ----- Step 5b: char and word+char features -----
 
+
 @pytest.mark.parametrize("features", FEATURE_KINDS)
 def test_feature_pipelines_return_zero_or_one(features):
     # Runs for "word", "char" (char_wb) and "word+char" (FeatureUnion).
-    model = build_pipeline("logreg", max_features=100, ngram_range=(1, 1), C=1.0,
-                           features=features, char_max_features=500, char_ngram_range=(3, 5))
+    model = build_pipeline(
+        "logreg",
+        max_features=100,
+        ngram_range=(1, 1),
+        C=1.0,
+        features=features,
+        char_max_features=500,
+        char_ngram_range=(3, 5),
+    )
     model.fit(MESSAGES, LABELS)
     predictions = model.predict(MESSAGES + ["Bu mesaja tıklayınız"])
     assert set(predictions) <= {0, 1}
 
 
 def test_char_features_use_char_wb():
-    vectorizer = build_features("char", max_features=100, ngram_range=(1, 1), char_ngram_range=(3, 5))
+    vectorizer = build_features(
+        "char", max_features=100, ngram_range=(1, 1), char_ngram_range=(3, 5)
+    )
     assert vectorizer.analyzer == "char_wb"
     assert vectorizer.ngram_range == (3, 5)
 
@@ -96,4 +106,6 @@ def test_metrics_get_language_prefix():
     model = train_tiny_model("logreg")
     test_sets = {"en": (MESSAGES, LABELS), "tr": (["Bedava hediye", "Yarın görüşürüz"], [1, 0])}
     scores = evaluate_by_language(model, test_sets)
-    assert set(scores) == {f"{lang}_{m}" for lang in ("en", "tr") for m in ("accuracy", "precision", "recall", "f1")}
+    assert set(scores) == {
+        f"{lang}_{m}" for lang in ("en", "tr") for m in ("accuracy", "precision", "recall", "f1")
+    }

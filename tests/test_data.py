@@ -20,8 +20,8 @@ def make_fake_df() -> pd.DataFrame:
                 "See you tomorrow",
                 "You won a prize, click here",
                 "See you tomorrow",  # duplicate of row 0
-                "   ",               # empty message (only spaces)
-                "Some text",         # invalid label
+                "   ",  # empty message (only spaces)
+                "Some text",  # invalid label
                 "Free gift for you",  # label needs cleaning -> "spam"
             ],
         }
@@ -49,7 +49,9 @@ def test_validate_does_not_change_input():
 
 def test_validate_decodes_html_codes():
     # "&lt;" and "&gt;" in the raw data must become "<" and ">".
-    df = pd.DataFrame({"label": ["ham"], "message": ["I will be there in &lt;#&gt; mins &amp; call"]})
+    df = pd.DataFrame(
+        {"label": ["ham"], "message": ["I will be there in &lt;#&gt; mins &amp; call"]}
+    )
     clean = validate_data(df)
     assert clean.loc[0, "message"] == "I will be there in <#> mins & call"
 

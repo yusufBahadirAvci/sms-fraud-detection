@@ -1,0 +1,35 @@
+# Tool settings. (We do not build a Python package, so there is no
+# [project] section; this file only configures ruff.)
+
+[tool.ruff]
+# Lines may be up to 100 characters (the default 88 is a bit short for
+# our long comments and log messages).
+line-length = 100
+# Our code uses Python 3.12 features (e.g. "str | None").
+target-version = "py312"
+# Do not look into these folders (not our code, or too big).
+extend-exclude = ["mlruns", "data", "models", "logs"]
+
+[tool.ruff.lint]
+# Rule groups (each letter is a family of checks):
+#   E, W = pycodestyle: basic style errors and warnings
+#   F    = pyflakes: real bugs (unused imports, undefined names, ...)
+#   I    = isort: imports in a fixed, sorted order
+#   B    = bugbear: common bug patterns (e.g. mutable default arguments)
+#   UP   = pyupgrade: use modern Python syntax
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.flake8-bugbear]
+# B008 warns about function calls in default arguments, because the call
+# runs only ONCE. FastAPI's Depends(...) is made to be used exactly like
+# that, so we tell ruff it is safe.
+extend-immutable-calls = ["fastapi.Depends"]
+
+[tool.ruff.lint.isort]
+# Our own code ("src") is a separate import group after the libraries.
+known-first-party = ["src"]
+
+[tool.ruff.format]
+# Same style as black: double quotes, spaces for indentation.
+quote-style = "double"
+indent-style = "space"

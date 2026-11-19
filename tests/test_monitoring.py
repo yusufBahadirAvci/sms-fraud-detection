@@ -16,6 +16,7 @@ THRESHOLDS = {"oov_ratio": 0.5, "ks_pvalue": 0.05, "psi": 0.2, "f1_drop": 0.10}
 
 # ----- PSI -----
 
+
 def test_psi_is_zero_for_identical_data():
     rng = np.random.default_rng(42)
     probs = rng.uniform(0, 1, 1000)
@@ -26,19 +27,22 @@ def test_psi_small_random_window_is_not_an_alert():
     # 100 values drawn from the SAME distribution must not look like drift,
     # even if some bins are empty by chance. (This was a real false alarm.)
     rng = np.random.default_rng(0)
-    reference = np.concatenate([rng.uniform(0, 0.1, 880), rng.uniform(0.1, 0.9, 40), rng.uniform(0.9, 1, 80)])
+    reference = np.concatenate(
+        [rng.uniform(0, 0.1, 880), rng.uniform(0.1, 0.9, 40), rng.uniform(0.9, 1, 80)]
+    )
     window = rng.choice(reference, 100, replace=False)
     assert psi(reference, window) < 0.2
 
 
 def test_psi_is_large_for_very_different_data():
-    low = np.full(500, 0.05)   # model says "surely normal"
+    low = np.full(500, 0.05)  # model says "surely normal"
     high = np.full(500, 0.95)  # model says "surely spam"
     # Way above the 0.2 "big change" rule of thumb.
     assert psi(low, high) > 1.0
 
 
 # ----- OOV ratio -----
+
 
 def make_vectorizer() -> TfidfVectorizer:
     return TfidfVectorizer().fit(["free prize call now", "see you at dinner"])
@@ -65,7 +69,9 @@ def test_oov_ratio_for_char_model_counts_letter_pieces():
 
 
 def test_find_vectorizer_picks_word_part_of_feature_union():
-    union = FeatureUnion([("word", TfidfVectorizer()), ("char", TfidfVectorizer(analyzer="char_wb"))])
+    union = FeatureUnion(
+        [("word", TfidfVectorizer()), ("char", TfidfVectorizer(analyzer="char_wb"))]
+    )
     pipeline = Pipeline([("tfidf", union), ("clf", LogisticRegression())])
     assert find_vectorizer(pipeline).analyzer == "word"
     # A plain pipeline: the vectorizer itself.
@@ -74,6 +80,7 @@ def test_find_vectorizer_picks_word_part_of_feature_union():
 
 
 # ----- Alerts -----
+
 
 def make_window(oov: float, length: int, prob: float, n: int = 200) -> pd.DataFrame:
     return pd.DataFrame(

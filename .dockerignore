@@ -20,3 +20,9 @@ reports/
 
 # Tests are not needed to RUN the app
 tests/
+
+# Not needed in the images.
+models/candidates/
+.github/
+.coverage
+coverage.xml

@@ -1,0 +1,15 @@
+# Tools for developers and CI: tests, coverage and linting.
+# Install with:
+#     pip install -r requirements-dev.txt
+# The line below also installs all runtime packages from requirements.txt,
+# because the tests import the real project code (training, API, MLflow).
+-r requirements.txt
+
+# Test runner.
+pytest==9.2.0
+# Coverage plugin for pytest: shows which code lines the tests run.
+pytest-cov==7.1.0
+# FastAPI's TestClient needs httpx to call the API in memory.
+httpx==0.28.1
+# Very fast linter AND formatter (replaces flake8, isort and black).
+ruff==0.17.5
