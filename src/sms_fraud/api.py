@@ -23,6 +23,7 @@ from src.sms_fraud.schemas import (
     PredictRequest,
     PredictResponse,
 )
+from src.sms_fraud.text_stats import oov_ratio
 
 logger = get_logger("sms_fraud.api")
 
@@ -43,6 +44,13 @@ class ModelService:
         self.pipeline = pipeline
         self.version = version
         self.threshold = threshold
+        # The TF-IDF step of the pipeline. We need its vocabulary to compute
+        # the OOV ratio (share of unknown words) for monitoring.
+        self.vectorizer = pipeline.named_steps["tfidf"]
+
+    def oov_ratios(self, messages: list[str]) -> list[float]:
+        """Share of unknown words for each message (0.0 = all known, 1.0 = all unknown)."""
+        return [oov_ratio(self.vectorizer, m) for m in messages]
 
     def predict(self, messages: list[str]) -> list[PredictResponse]:
         """Predict many messages at once (faster than one by one)."""
@@ -123,11 +131,12 @@ def get_model_service(request: Request) -> ModelService:
     return service
 
 
-def log_predictions(messages: list[str], results: list[PredictResponse]) -> None:
+def log_predictions(messages: list[str], results: list[PredictResponse], oov: list[float]) -> None:
     """Add one JSON line per prediction to logs/predictions.jsonl.
 
-    We save the message LENGTH, not the message text. Why? SMS can contain
-    private data (names, codes). For monitoring, numbers are enough.
+    We save NUMBERS about the message (length, share of unknown words), never
+    the message text. Why? SMS can contain private data (names, codes).
+    For monitoring, numbers are enough.
     JSONL = one JSON object per line: easy to append and easy to read later.
     """
     PREDICTIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -137,12 +146,14 @@ def log_predictions(messages: list[str], results: list[PredictResponse]) -> None
             {
                 "timestamp": timestamp,
                 "message_length": len(message),
+                # round: 4 digits are enough and keep the log small.
+                "oov_ratio": round(ratio, 4),
                 "probability": result.probability,
                 "prediction": result.is_fraud,
                 "model_version": result.model_version,
             }
         )
-        for message, result in zip(messages, results)
+        for message, result, ratio in zip(messages, results, oov)
     ]
     with _log_lock:
         with open(PREDICTIONS_LOG, "a", encoding="utf-8") as f:
@@ -163,7 +174,7 @@ def health(request: Request) -> HealthResponse:
 def predict(body: PredictRequest, service: ModelService = Depends(get_model_service)) -> PredictResponse:
     """Classify one SMS message."""
     result = service.predict([body.message])[0]
-    log_predictions([body.message], [result])
+    log_predictions([body.message], [result], service.oov_ratios([body.message]))
     return result
 
 
@@ -173,5 +184,5 @@ def predict_batch(
 ) -> BatchPredictResponse:
     """Classify many SMS messages in one request."""
     results = service.predict(body.messages)
-    log_predictions(body.messages, results)
+    log_predictions(body.messages, results, service.oov_ratios(body.messages))
     return BatchPredictResponse(results=results)

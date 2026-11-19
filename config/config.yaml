@@ -12,6 +12,10 @@ data:
   raw_file: "SMSSpamCollection"
   # Folder for the cleaned and split files.
   processed_dir: "data/processed"
+  # Turkish SMS data (tracked with DVC, not Git). Used to test the English
+  # model on another language and to measure drift (Step 5).
+  turkish_raw_file: "data/external/TurkishSMSCollection.csv"
+  turkish_file: "data/processed/turkish.csv"
 
 split:
   # 20% of the rows go to the test set, 80% to the train set.
@@ -58,6 +62,25 @@ api:
   threshold: 0.5
   # Every prediction is added as one JSON line here (used for monitoring).
   predictions_log: "logs/predictions.jsonl"
+
+monitoring:
+  # Dataset mode (English test.csv vs Turkish data). Made by the DVC "monitor" stage.
+  output_dir: "reports/monitoring"
+  # Log mode (English test.csv vs live API traffic). Not part of DVC.
+  live_output_dir: "reports/monitoring_live"
+  # Number of equal-width bins (0.0-0.1, 0.1-0.2, ...) for the PSI.
+  psi_bins: 10
+  # If a value crosses its threshold, we raise a "DRIFT ALERT".
+  thresholds:
+    # More than half of the words are unknown to the model.
+    oov_ratio: 0.5
+    # KS test p-value below 0.05: the length distributions are "really"
+    # different (only a 5% chance that the difference is random).
+    ks_pvalue: 0.05
+    # PSI above 0.2 is the usual rule of thumb for a "big" shift.
+    psi: 0.2
+    # F1 is more than 0.10 lower than on the English test set.
+    f1_drop: 0.10
 
 logging:
   log_file: "logs/app.log"

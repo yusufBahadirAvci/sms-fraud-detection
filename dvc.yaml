@@ -2,8 +2,11 @@
 # outputs (outs) of each stage. On "dvc repro" it runs a stage again ONLY
 # if one of its inputs changed. This saves time and makes results reproducible.
 #
-# Order: prepare -> eda and prepare -> train. DVC finds the order itself
-# from the deps: eda and train both need data/processed from prepare.
+# Order (DVC finds it from the deps):
+#   prepare ---------> eda
+#      |    \--------> train ---\
+#      |                         > monitor
+#   prepare_turkish ------------/
 stages:
   prepare:
     cmd: python -m src.sms_fraud.data
@@ -12,13 +15,30 @@ stages:
     deps:
       - src/sms_fraud/data.py
       - config/config.yaml
+    # We list the two files, not the whole data/processed folder. Why? Two
+    # stages cannot own the same folder, and prepare_turkish also writes
+    # into data/processed.
     outs:
-      - data/processed
+      - data/processed/train.csv
+      - data/processed/test.csv
+
+  prepare_turkish:
+    cmd: python -m src.sms_fraud.turkish_data
+    deps:
+      # The raw file is tracked by DVC (TurkishSMSCollection.csv.dvc).
+      - data/external/TurkishSMSCollection.csv
+      - src/sms_fraud/turkish_data.py
+      # turkish_data.py reuses validate_data() from here.
+      - src/sms_fraud/data.py
+      - config/config.yaml
+    outs:
+      - data/processed/turkish.csv
 
   eda:
     cmd: python -m src.sms_fraud.eda
     deps:
-      - data/processed
+      - data/processed/train.csv
+      - data/processed/test.csv
       - src/sms_fraud/eda.py
       # eda.py reads the keyword list from here (for observation 3).
       - src/sms_fraud/rule_based.py
@@ -29,7 +49,8 @@ stages:
   train:
     cmd: python -m src.sms_fraud.train
     deps:
-      - data/processed
+      - data/processed/train.csv
+      - data/processed/test.csv
       - src/sms_fraud/train.py
       - config/config.yaml
     outs:
@@ -43,3 +64,17 @@ stages:
       # The confusion matrix image of the pipeline model. Also kept in Git.
       - reports/confusion_matrix.png:
           cache: false
+
+  monitor:
+    # Dataset mode: English test set vs labelled Turkish data.
+    cmd: python -m src.sms_fraud.monitoring
+    deps:
+      - models/model.joblib
+      - data/processed/test.csv
+      - data/processed/turkish.csv
+      # The code and the thresholds (in config.yaml) also change the result.
+      - src/sms_fraud/monitoring.py
+      - src/sms_fraud/text_stats.py
+      - config/config.yaml
+    outs:
+      - reports/monitoring

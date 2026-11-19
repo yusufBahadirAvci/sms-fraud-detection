@@ -1,0 +1,5 @@
+outs:
+- md5: 5559a73753f1a45c9e935ee07f505fba
+  size: 605233
+  hash: md5
+  path: TurkishSMSCollection.csv

@@ -45,6 +45,18 @@ Predictions are appended to `logs/predictions.jsonl` (kept on your computer, als
 curl.exe -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{\"message\": \"You won a FREE prize! Call now\"}'
 ```
 
+## Monitoring (drift)
+```powershell
+dvc repro monitor                                           # English test vs Turkish data -> reports/monitoring/
+python scripts/simulate_traffic.py                          # API must run: 100 English + 100 Turkish requests
+python -m src.sms_fraud.monitoring --mode log --take 100 --out-dir reports/monitoring_live/english
+python -m src.sms_fraud.monitoring --mode log --skip 100 --take 100 --out-dir reports/monitoring_live/turkish
+```
+A crossed threshold logs `DRIFT ALERT: ...` and writes `alert.json` next to `drift_report.md`.
+Thresholds are in `config/config.yaml` (`monitoring:`).
+
+The raw Turkish file is tracked with DVC (`data/external/TurkishSMSCollection.csv.dvc`), not Git.
+
 ## Test
 ```powershell
 pytest -v

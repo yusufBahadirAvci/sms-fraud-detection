@@ -18,6 +18,10 @@ data/raw/
 # MLflow runs and registered models (local tracking store).
 mlruns/
 
+# Monitoring reports made from the live API log (log mode). They change
+# with every run and are not part of the DVC pipeline.
+reports/monitoring_live/
+
 # Log files are created each run; they are not source code.
 logs/
 

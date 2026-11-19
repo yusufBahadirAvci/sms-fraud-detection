@@ -89,9 +89,11 @@ def test_predictions_are_logged(client):
     lines = api.PREDICTIONS_LOG.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     record = json.loads(lines[0])
-    assert set(record) == {"timestamp", "message_length", "probability", "prediction", "model_version"}
+    assert set(record) == {"timestamp", "message_length", "oov_ratio", "probability", "prediction", "model_version"}
     # We log the LENGTH, never the text itself (privacy).
     assert record["message_length"] == len(FRAUD_TEXT)
+    assert "message" not in record
+    assert 0.0 <= record["oov_ratio"] <= 1.0
 
 
 def test_missing_model_returns_503(monkeypatch, tmp_path):
