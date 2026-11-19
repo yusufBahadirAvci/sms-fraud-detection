@@ -4,6 +4,13 @@ Run it with:
     python -m src.sms_fraud.promote                          (compare and maybe promote)
     python -m src.sms_fraud.promote --champion-version 11    (first time only, see below)
     python -m src.sms_fraud.promote rollback                 (go back to the "previous" model)
+    python -m src.sms_fraud.promote --champion-split old     (Step 7b, see below)
+
+Step 7b (fair contest): a champion trained on the OLD random split has
+already SEEN some messages of the clean test set (or near-copies of them).
+Its scores on the full clean test set are too high. With
+--champion-split old, the champion is scored only on the clean test rows
+that have NO (near-)copy in its old training data ("unseen-only").
 
 Words:
 - champion:   the model the API serves now (models/model.joblib).
@@ -39,6 +46,8 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
 from src.sms_fraud.config import get_config, project_path
+from src.sms_fraud.data import split_data
+from src.sms_fraud.leakage import check_leakage, read_csv
 from src.sms_fraud.logger import get_logger
 from src.sms_fraud.train import evaluate_by_language, load_test_sets, setup_mlflow
 
@@ -91,6 +100,30 @@ def decide(champion: dict, challenger: dict, max_en_f1_drop: float) -> tuple[boo
         + ("OK" if en_ok else "too big a drop (FAIL)")
     )
     return tr_better and en_ok, reasons
+
+
+def unseen_only(test_sets: dict, seen: dict, threshold: float) -> dict:
+    """Keep only the test rows that have NO (near-)copy in the seen messages.
+
+    test_sets: {"en": (X, y), ...}; seen: {"en": messages the model trained on, ...}.
+    """
+    result = {}
+    for lang, (X, y) in test_sets.items():
+        keep = ~check_leakage(seen[lang], X, threshold)["near"].to_numpy()
+        result[lang] = (X[keep].reset_index(drop=True), y[keep].reset_index(drop=True))
+    return result
+
+
+def old_split_train(cfg: dict) -> dict:
+    """The train messages of the OLD random split (what the old champion saw).
+
+    split_data() without groups rebuilds it exactly (same rows, same seed),
+    the same way leakage.py does.
+    """
+    files = {"en": cfg["data"]["english_file"], "tr": cfg["data"]["turkish_file"]}
+    return {
+        lang: split_data(read_csv(project_path(path)))[0]["message"] for lang, path in files.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +211,12 @@ def write_report(
     promoted: bool,
     reasons: list[str],
     max_en_f1_drop: float,
+    notes: list[str] | None = None,
 ) -> None:
     """Write promotion.md: decision, reasons and the comparison table.
 
     columns: {column title: metrics dict}, e.g. {"champion (v11)": {...}, "A_word (v12)": {...}}
+    notes: extra lines shown under the table (e.g. how the champion was scored).
     """
     titles = list(columns)
     header = "| Metric | " + " | ".join(titles) + " |"
@@ -208,6 +243,8 @@ def write_report(
         "|---|" + "---|" * len(titles),
         *[f"| {m} | " + " | ".join(f"{columns[t][m]:.4f}" for t in titles) + " |" for m in METRICS],
         "",
+        *[f"- {n}" for n in notes or []],
+        *([""] if notes else []),
         "Rollback: `python -m src.sms_fraud.promote rollback` "
         "(then `dvc add models/model.joblib`).",
         "",
@@ -221,10 +258,13 @@ def write_report(
 # ---------------------------------------------------------------------------
 
 
-def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | None) -> bool:
+def run_promotion(
+    client: MlflowClient, cfg: dict, champion_version_arg: str | None, champion_split: str = "clean"
+) -> bool:
     model_name = cfg["mlflow"]["registered_model_name"]
     model_path = project_path(cfg["model"]["model_path"])
     max_drop = cfg["promotion"]["max_en_f1_drop"]
+    threshold = cfg["leakage"]["similarity_threshold"]
 
     # Which registered version is the champion now?
     champion_version = alias_version(client, model_name, CHAMPION) or champion_version_arg
@@ -238,12 +278,44 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
     # Why not use its old MLflow metrics? They were measured on other data
     # (English only). A fair contest needs the same exam for both.
     test_sets = load_test_sets()
-    champion_metrics = evaluate_by_language(joblib.load(model_path), test_sets)
+    notes = []
+    champion_col = f"champion (v{champion_version})"
+    if champion_split == "old":
+        # Step 7b: the champion trained on the OLD split. Score it only on
+        # the clean test rows it has never seen (no near-copy in its train).
+        unseen = unseen_only(test_sets, old_split_train(cfg), threshold)
+        champion_col += ", unseen-only"
+        notes.append(
+            "Champion was trained on the OLD random split, so it is scored only on "
+            "clean test rows with no near-copy in its training data: "
+            + ", ".join(
+                f"{lang} {len(unseen[lang][0])} of {len(test_sets[lang][0])} rows"
+                for lang in test_sets
+            )
+            + "."
+        )
+        eval_sets = unseen
+    else:
+        eval_sets = test_sets
+    champion_metrics = evaluate_by_language(joblib.load(model_path), eval_sets)
 
     with open(project_path(cfg["model"]["metrics_path"]), encoding="utf-8") as f:
         runs = json.load(f)["runs"]
     challenger_name = pick_challenger(runs)
     challenger = runs[challenger_name]
+
+    extra_columns = {}
+    if champion_split == "old":
+        # Honesty check: the challenger on the SAME unseen rows as the champion.
+        same_rows = evaluate_by_language(
+            joblib.load(project_path(challenger["candidate_path"])), eval_sets
+        )
+        extra_columns[f"{challenger_name}, same unseen rows"] = same_rows
+        notes.append(
+            f"Same rows for both: champion en_f1 {champion_metrics['en_f1']:.4f} / "
+            f"tr_f1 {champion_metrics['tr_f1']:.4f}, {challenger_name} "
+            f"en_f1 {same_rows['en_f1']:.4f} / tr_f1 {same_rows['tr_f1']:.4f}."
+        )
 
     promoted, reasons = decide(champion_metrics, challenger["metrics"], max_drop)
     for reason in reasons:
@@ -265,10 +337,11 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
         logger.info("Challenger rejected; champion stays version %s", champion_version)
 
     # Table: champion first, then every new run (the challenger is marked).
-    columns = {f"champion (v{champion_version})": champion_metrics}
+    columns = {champion_col: champion_metrics}
     for name, run in runs.items():
         mark = " ← challenger" if name == challenger_name else ""
         columns[f"{name} (v{run['model_version']}){mark}"] = run["metrics"]
+    columns.update(extra_columns)
     write_report(
         project_path(cfg["promotion"]["report_path"]),
         columns,
@@ -277,6 +350,7 @@ def run_promotion(client: MlflowClient, cfg: dict, champion_version_arg: str | N
         promoted=promoted,
         reasons=reasons,
         max_en_f1_drop=max_drop,
+        notes=notes,
     )
     return promoted
 
@@ -288,6 +362,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--champion-version",
         default=None,
         help="Registered version of the current model (only needed the first time).",
+    )
+    parser.add_argument(
+        "--champion-split",
+        choices=["clean", "old"],
+        default="clean",
+        help="Split the champion was trained on. 'old' = score it on unseen-only test rows.",
     )
     return parser.parse_args(argv)
 
@@ -311,7 +391,7 @@ def main(argv=None) -> None:
             )
         logger.info("Now run: dvc add models/model.joblib (and restart the API)")
     else:
-        run_promotion(client, cfg, args.champion_version)
+        run_promotion(client, cfg, args.champion_version, args.champion_split)
 
 
 if __name__ == "__main__":

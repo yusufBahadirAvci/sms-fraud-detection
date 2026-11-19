@@ -24,5 +24,8 @@ tests/
 # Not needed in the images.
 models/candidates/
 .github/
+docs/
+scripts/
+*.md
 .coverage
 coverage.xml

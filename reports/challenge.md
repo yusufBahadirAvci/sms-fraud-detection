@@ -1,6 +1,6 @@
 # Turkish Phishing Challenge Set
 
-- Model: champion (registered version 13, models/model.joblib)
+- Model: champion (registered version 19, models/model.joblib)
 - Messages: 40 (hand-written; evaluation only, never trained on)
 
 | Metric | Value |
@@ -17,6 +17,6 @@
 
 | True label | Spam prob | Message |
 |---|---|---|
-| spam | 0.363 | Hesabınıza yeni bir cihazdan giriş yapıldı. Siz değilseniz şifrenizi buradan sıfırlayın: https://guvenli-giris.example.com |
-| spam | 0.415 | Operatörünüz: Yeni SIM kartınız için bilgilerinizi doğrulayın, aksi halde hattınız askıya alınacak. example.com/sim |
-| spam | 0.286 | Merhaba anne, telefonum bozuldu bu yeni numaram. Acil 2000 TL lazım bu IBAN'a atar mısın TR00 0000 0000 0000 0000 0000 00 |
+| spam | 0.405 | Hesabınıza yeni bir cihazdan giriş yapıldı. Siz değilseniz şifrenizi buradan sıfırlayın: https://guvenli-giris.example.com |
+| spam | 0.410 | Operatörünüz: Yeni SIM kartınız için bilgilerinizi doğrulayın, aksi halde hattınız askıya alınacak. example.com/sim |
+| spam | 0.273 | Merhaba anne, telefonum bozuldu bu yeni numaram. Acil 2000 TL lazım bu IBAN'a atar mısın TR00 0000 0000 0000 0000 0000 00 |

@@ -30,6 +30,9 @@ build/
 dist/
 *.egg-info/
 
+# Temp file of promote.py while it swaps models/model.joblib.
+*.tmp
+
 # Coverage output (pytest-cov), created on every test run.
 .coverage
 coverage.xml

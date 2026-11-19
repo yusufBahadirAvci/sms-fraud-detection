@@ -1,9 +1,10 @@
 """Create a TINY fake model at models/model.joblib. FOR CI ONLY.
 
-Why? The real model lives only in the local DVC cache (no DVC remote yet),
-so GitHub Actions cannot download it. But Dockerfile.api copies
+Why? The real model is in the DVC remote (DagsHub), and CI should need no
+secrets (pull requests get none). But Dockerfile.api copies
 models/model.joblib into the image. With this dummy model, CI can still
 check that the API image builds, starts, and answers /health and /predict.
+The CD workflow later builds the image with the REAL model.
 
 The dummy model is NOT useful for real predictions (10 training messages).
 

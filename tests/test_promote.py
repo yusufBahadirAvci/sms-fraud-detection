@@ -8,6 +8,7 @@ so the real mlruns/ folder is never touched.
 import joblib
 import mlflow
 import mlflow.sklearn
+import pandas as pd
 import pytest
 from mlflow import MlflowClient
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -22,6 +23,7 @@ from src.sms_fraud.promote import (
     pick_challenger,
     promote,
     rollback,
+    unseen_only,
 )
 
 MAX_DROP = 0.02
@@ -63,6 +65,20 @@ def test_challenger_is_the_run_with_best_turkish_f1():
         "C": {"metrics": {"en_f1": 0.95, "tr_f1": 0.96}},
     }
     assert pick_challenger(runs) == "B"
+
+
+def test_unseen_only_drops_test_rows_the_model_has_seen():
+    # Step 7b: the old champion saw these train messages. A test row that is
+    # a near-copy (only the number changes) must not count in its score.
+    seen = {"en": pd.Series(["WIN a prize now, call 0800 111", "see you at the cinema tonight"])}
+    X = pd.Series(["WIN a prize now, call 0800 999", "my train is late again, sorry"])
+    y = pd.Series([1, 0])
+
+    result = unseen_only({"en": (X, y)}, seen, threshold=0.9)
+
+    X_left, y_left = result["en"]
+    assert list(X_left) == ["my train is late again, sorry"]
+    assert list(y_left) == [0]
 
 
 # ----- The registry: promote + rollback (temporary MLflow) -----
