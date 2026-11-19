@@ -1,0 +1,12 @@
+# Line endings: always LF ("\n") for text files, on every computer.
+# Why? DVC remembers an md5 hash of every code file a stage depends on.
+# Windows Git (core.autocrlf=true) would check files out with CRLF ("\r\n"),
+# which changes the hash, so DVC would think the code changed and re-run
+# every stage. With LF everywhere, Windows, Linux (CI) and DagsHub agree.
+* text=auto eol=lf
+
+# Binary files: never touch their bytes.
+*.png binary
+*.jpg binary
+*.joblib binary
+*.zip binary
